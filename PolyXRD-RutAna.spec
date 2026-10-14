@@ -51,6 +51,8 @@ a = Analysis(
         "rutana.core.refine.nonlinear",
         "rutana.core.refine.qpa",
         "rutana.core.refine.rfactors",
+        "rutana.core.refine.realdata",
+        "rutana.core.kalpha2",
         "rutana.gui.resources",
         "rutana.gui.services",
         "rutana.gui.canvas",

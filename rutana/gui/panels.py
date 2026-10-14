@@ -294,7 +294,9 @@ class BPanel(QWidget):
         self.chk_uvw = QCheckBox(self.grp_refine)
         self.chk_uvw.setChecked(True)
         self.chk_eta = QCheckBox(self.grp_refine)
-        self.chk_eta.setChecked(False)
+        # v1.0.0 实证：真实粉末谱上 eta 必须精修（固定 0.54 差 1.8pp，
+        # 见 docs/VALIDATION_v1.0.0.md §B.3），故默认勾选
+        self.chk_eta.setChecked(True)
         for w in (self.chk_zero, self.chk_uvw, self.chk_eta):
             rv.addWidget(w)
         h = QHBoxLayout()

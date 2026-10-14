@@ -36,7 +36,8 @@ def _model_curve(wa: float) -> tuple[np.ndarray, np.ndarray]:
     grid = PROFILE["tmin"] + PROFILE["step"] * np.arange(n)
     prm = ProfileParams(zero=PROFILE["zero"], U=PROFILE["U"], V=PROFILE["V"],
                         W=PROFILE["W"], eta=PROFILE["eta"],
-                        anode=PROFILE["anode"], ka_ratio=PROFILE["ka_ratio"])
+                        anode=PROFILE["anode"], ka_ratio=PROFILE["ka_ratio"],
+                        integrated=False)  # SynthPattern 合成器是峰高口径
     pa = compute_phase_profile(st_a, grid, prm, PROFILE["tmin"], PROFILE["tmax"])
     pr = compute_phase_profile(st_r, grid, prm, PROFILE["tmin"], PROFILE["tmax"])
     pattern = (fa / norm) / va * pa + (fr / norm) / vr * pr

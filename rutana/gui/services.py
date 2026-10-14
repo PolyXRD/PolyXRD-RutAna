@@ -304,7 +304,7 @@ def wr_from_mass_ratio(ratio_m: float) -> float:
 # B 法（Rietveld 全谱拟合）
 # --------------------------------------------------------------------------- #
 def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
-                 refine_eta: bool = False, n_bg: int = 3,
+                 refine_eta: bool = True, n_bg: int = 3,
                  extra_cifs: tuple[str, ...] = (), progress_cb: ProgressCb = None,
                  on_iter: Callable[[int, float], None] | None = None,
                  cancel_cb: Callable[[], bool] | None = None) -> dict:
@@ -314,8 +314,8 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
     其中 ycalc/diff 与观测谱同网格，可直接交给画布叠加显示。
     """
     parse_cif = _core("profile.cif.parse_cif")
-    profile_params = _core("profile.forward.ProfileParams")
-    refine_config = _core("refine.nonlinear.RefineConfig")
+    profile_params = _core("refine.realdata.real_params")
+    refine_config = _core("refine.realdata.real_config")
     refine = _core("refine.nonlinear.refine")
     builtin_cif_path = _builtin_cif_path()
 
@@ -327,14 +327,22 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
     _emit(progress_cb, "busy.load", 0.25)
     phases = [parse_cif(p) for p in cif_paths]
 
+    # v1.0.0: GUI 面向真实粉末谱，默认走 realdata 推荐配置
+    # （tent 背景 80 节点 + asym/bfactor/晶胞精修 + 积分强度口径）。
+    # 调用方显式传入的开关仍然生效；n_bg=3 视为"未设置"，改用 80。
     prm0 = profile_params()
-    cfg = refine_config(refine_zero=refine_zero, refine_uvw=refine_uvw,
-                        refine_eta=refine_eta, n_bg=int(n_bg))
+    cfg_overrides: dict[str, Any] = {
+        "refine_zero": refine_zero, "refine_uvw": refine_uvw,
+        "refine_eta": refine_eta,
+        "n_bg": 80 if int(n_bg) == 3 else int(n_bg)}
+    # core 的进度/迭代回调走 RefineConfig 字段（refine() 签名不直接收回调）；
+    # 用 real_config 探测能力，旧版 core 不支持时静默降级为不确定模式。
+    if progress_cb is not None and supports_param(refine_config, "progress_cb"):
+        cfg_overrides["progress_cb"] = sub_progress(progress_cb, 0.30, 1.0)
+    if on_iter is not None and supports_param(refine_config, "on_iter"):
+        cfg_overrides["on_iter"] = on_iter
+    cfg = refine_config(**cfg_overrides)
     kwargs: dict[str, Any] = {}
-    if progress_cb is not None and supports_param(refine, "progress_cb"):
-        kwargs["progress_cb"] = sub_progress(progress_cb, 0.30, 1.0)
-    if on_iter is not None and supports_param(refine, "on_iter"):
-        kwargs["on_iter"] = on_iter
     if cancel_cb is not None and supports_param(refine, "cancel_cb"):
         kwargs["cancel_cb"] = cancel_cb
     res = refine(phases, pat, prm0, cfg, **kwargs)

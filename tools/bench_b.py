@@ -30,7 +30,10 @@ sys.path.insert(0, str(ROOT))
 
 from rutana.core.dtypes import Pattern  # noqa: E402
 from rutana.core.profile.cif import parse_cif  # noqa: E402
-from rutana.core.profile.forward import ProfileParams  # noqa: E402
+from rutana.core.profile.forward import (  # noqa: E402
+    ProfileParams,
+    caglioti_2theta,
+)
 from rutana.core.refine.nonlinear import RefineConfig, refine  # noqa: E402
 from rutana.core.refine.qpa import (  # noqa: E402
     qpa_inputs_from_cif,
@@ -86,7 +89,10 @@ def ensure_virtual_b() -> dict:
         fr = wr / (zr * mr)
         norm = fa + fr
         specs = [(st_a, fa / norm), (st_r, fr / norm)]
-        fwhm = xse.caglioti(PROFILE["U"], PROFILE["V"], PROFILE["W"])
+        # FWHM 用 rutana 修正口径 caglioti_2theta（tanθ，θ=2θ/2）：xse 自带的
+        # caglioti 以 tan(2θ) 求值（家族历史语义，物理有误，2θ>90° 后失真）。
+        # 生成端与拟合端必须同一口径 —— v1.0.0 实证记录于 docs/VALIDATION_v1.0.0.md。
+        fwhm = caglioti_2theta(PROFILE["U"], PROFILE["V"], PROFILE["W"])
         physics = {"anode": PROFILE["anode"], "ka_ratio": PROFILE["ka_ratio"]}
         # 零点偏移: 实测 y(x) = f(x − zero)。直接在 (grid − zero) 上合成，无插值误差
         shifted, _info = xse.synthesize_multi_phase(
@@ -139,7 +145,7 @@ def run_roundtrip(verbose: bool = True) -> list[dict]:
             (VIRTUAL_B / "manifest.json").read_text(encoding="utf-8"))["samples"]:
         pat = _load_pattern(VIRTUAL_B / truth["file"])
         prm0 = ProfileParams(zero=0.0, U=0.0, V=0.0, W=0.02, eta=0.5,
-                             anode="Cu")
+                             anode="Cu", integrated=False)  # 合成数据=峰高口径
         cfg = RefineConfig(refine_zero=True, refine_uvw=True,
                            refine_eta=False, n_bg=3, max_iter=40,
                            tmin=PROFILE["tmin"], tmax=PROFILE["tmax"])

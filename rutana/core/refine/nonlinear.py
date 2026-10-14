@@ -1,11 +1,17 @@
 """B 法精修 · 非线性层（T4.4，核心：变量投影 separable NLS）。
 
 技术决策 D3：scale 与背景系数是线性参数，每次迭代内用 lstsq 解析求解；
-LM 只迭代非线性参数 (zero, U, V, W[, eta])，待优化参数从 ~15 降到 ~5。
+LM 只迭代非线性参数，待优化参数从 ~15 降到 ~5。
+
+v1.0.0 扩展（真实数据调优成果，见 docs/VALIDATION_v1.0.0.md）：
+- 背景模式 bg_mode="cheb"|"tent"（tent = 分片线性帽，真实大弯背景更优）
+- refine_asym / refine_bfactor：低角不对称尾 + 经验高角衰减
+- refine_cell：每相晶胞 a,c 缩放（±1%，T4.7 内容）
+- progress_cb(msg, pct) / on_iter(gen, rwp)：GUI 忙窗回调（默认 None）
 
 residual_fn(x):
-  x -> 重建 ProfileParams -> compute_phase_profile 各相 -> solve_linear
-  解析出 scale+背景 -> 返回加权残差 (y_obs − y_calc)/σ。
+  x -> 重建 ProfileParams(+每相晶胞) -> compute_phase_profile 各相
+  -> solve_linear 解析出 scale+背景 -> 返回加权残差 (y_obs − y_calc)/σ。
 history 记录每次残差评估的 Rwp（含被拒绝的试探，画收敛曲线用）。
 """
 from __future__ import annotations
@@ -24,10 +30,14 @@ from rutana.core.refine.lm import lm_minimize
 from rutana.core.refine.linear import solve_linear_detail
 from rutana.core.refine.rfactors import RFactors, compute_rfactors
 
-# 参数边界（TASKS T4.4 冻结值）
+# 参数边界（TASKS T4.4 冻结值 + v1.0.0 扩展）
 ZERO_BOUNDS = (-0.5, 0.5)
 UVW_BOUNDS = (0.0, 5.0)
+V_BOUNDS = (-0.5, 0.5)              # v1.0.0: 真实数据 Caglioti V 可为负（实测 -0.04）
 ETA_BOUNDS = (0.05, 1.0)
+ASYM_BOUNDS = (-0.05, 0.30)
+BFACTOR_BOUNDS = (0.0, 6.0)
+CELL_BOUNDS = (0.99, 1.01)          # 晶胞 a,c 缩放 ±1%
 
 
 @dataclass(frozen=True)
@@ -42,12 +52,21 @@ class RefineConfig:
     sigma: np.ndarray | None = None
     tmin: float = 5.0
     tmax: float = 90.0
+    # ---- v1.0.0 扩展（默认关闭，保持 v0.1.0 行为） ----
+    bg_mode: str = "cheb"            # "cheb" | "tent"
+    refine_asym: bool = False        # 低角不对称尾
+    refine_bfactor: bool = False     # 经验高角衰减 B
+    refine_cell: bool = False        # 每相晶胞 a,c 缩放 (T4.7)
+    backend: str = "lm"              # "lm"（自研，默认）| "scipy"（trf，真实数据推荐）
+    progress_cb: object = None       # callable(msg: str, pct: float | None)
+    on_iter: object = None           # callable(gen: int, rwp: float)
 
 
 @dataclass(frozen=True)
 class RefineResult:
     """精修结果。phase_dropped 为被线性层剔除（scale=0）的相下标；
-    restarted=True 表示角点陷阱检测触发过重启链（至少跑过一个重启起点）。"""
+    restarted=True 表示角点陷阱检测触发过重启链（至少跑过一个重启起点）；
+    cell_scales 为每相 (fa, fc) 晶胞缩放（refine_cell=False 时全为 1.0）。"""
 
     params: ProfileParams
     scales: np.ndarray
@@ -58,79 +77,139 @@ class RefineResult:
     history: list[float] = field(default_factory=list)
     phase_dropped: list[int] = field(default_factory=list)
     restarted: bool = False
+    cell_scales: list[tuple[float, float]] = field(default_factory=list)
+    iters: int = 0
 
 
-def _pack(prm: ProfileParams, cfg: RefineConfig) -> np.ndarray:
-    """按 cfg 开关把 ProfileParams 打包成 LM 向量。"""
-    x = []
+def _pack(prm: ProfileParams, cfg: RefineConfig, n_phase: int) -> np.ndarray:
+    """按 cfg 开关把非线性参数打包成 LM 向量。"""
+    x: list[float] = []
     if cfg.refine_zero:
         x.append(prm.zero)
     if cfg.refine_uvw:
         x.extend([prm.U, prm.V, prm.W])
     if cfg.refine_eta:
         x.append(prm.eta)
+    if cfg.refine_asym:
+        x.append(prm.asym)
+    if cfg.refine_bfactor:
+        x.append(prm.bfactor)
+    if cfg.refine_cell:
+        cs = getattr(prm, "_cell_scales", None) or [(1.0, 1.0)] * n_phase
+        for fa, fc in cs:
+            x.extend([fa, fc])
     return np.array(x, dtype=np.float64) if x else np.zeros(0)
 
 
-def _unpack(x: np.ndarray, base: ProfileParams, cfg: RefineConfig) -> ProfileParams:
-    """由 LM 向量重建 ProfileParams（未精修字段取 base 值）。"""
+def _unpack(x: np.ndarray, base: ProfileParams, cfg: RefineConfig,
+            n_phase: int) -> tuple[ProfileParams, list[tuple[float, float]]]:
+    """由 LM 向量重建 (ProfileParams, 每相晶胞缩放)。未精修字段取 base 值。"""
     i = 0
     zero, U, V, W, eta = base.zero, base.U, base.V, base.W, base.eta
+    asym, bfactor = base.asym, base.bfactor
     if cfg.refine_zero:
         zero = float(x[i]); i += 1
     if cfg.refine_uvw:
         U, V, W = float(x[i]), float(x[i + 1]), float(x[i + 2]); i += 3
     if cfg.refine_eta:
         eta = float(x[i]); i += 1
-    return ProfileParams(zero=zero, U=U, V=V, W=max(W, MIN_W), eta=eta,
-                         anode=base.anode, ka_ratio=base.ka_ratio,
-                         po_r=base.po_r, wavelength=base.wavelength)
+    if cfg.refine_asym:
+        asym = float(x[i]); i += 1
+    if cfg.refine_bfactor:
+        bfactor = float(x[i]); i += 1
+    cell = [(1.0, 1.0)] * n_phase
+    if cfg.refine_cell:
+        for j in range(n_phase):
+            cell[j] = (float(x[i]), float(x[i + 1])); i += 2
+    prm = ProfileParams(zero=zero, U=U, V=V, W=max(W, MIN_W), eta=eta,
+                        anode=base.anode, ka_ratio=base.ka_ratio,
+                        po_r=base.po_r, wavelength=base.wavelength,
+                        asym=asym, bfactor=bfactor,
+                        integrated=base.integrated)
+    return prm, cell
 
 
-def _bounds(cfg: RefineConfig) -> tuple[np.ndarray, np.ndarray]:
+def _bounds(cfg: RefineConfig, n_phase: int) -> tuple[np.ndarray, np.ndarray]:
     lo, hi = [], []
     if cfg.refine_zero:
         lo.append(ZERO_BOUNDS[0]); hi.append(ZERO_BOUNDS[1])
     if cfg.refine_uvw:
-        # W 下限保护：防止 FWHM 退化成 0 导致除零
-        lo.extend([UVW_BOUNDS[0], UVW_BOUNDS[0], MIN_W])
-        hi.extend([UVW_BOUNDS[1]] * 3)
+        # W 下限保护：防止 FWHM 退化成 0 导致除零；V 允许为负（真实数据）
+        lo.extend([UVW_BOUNDS[0], V_BOUNDS[0], MIN_W])
+        hi.extend([UVW_BOUNDS[1], V_BOUNDS[1], UVW_BOUNDS[1]])
     if cfg.refine_eta:
         lo.append(ETA_BOUNDS[0]); hi.append(ETA_BOUNDS[1])
+    if cfg.refine_asym:
+        lo.append(ASYM_BOUNDS[0]); hi.append(ASYM_BOUNDS[1])
+    if cfg.refine_bfactor:
+        lo.append(BFACTOR_BOUNDS[0]); hi.append(BFACTOR_BOUNDS[1])
+    if cfg.refine_cell:
+        for _ in range(n_phase):
+            lo.extend([CELL_BOUNDS[0]] * 2); hi.extend([CELL_BOUNDS[1]] * 2)
     return np.array(lo), np.array(hi)
 
 
+def _scaled(struct: CifStructure, fa: float, fc: float) -> CifStructure:
+    """四方晶系晶胞 a,c 缩放（b 同 a；角度不变的轴缩放不改变原子分数坐标）。"""
+    if abs(fa - 1.0) < 1e-12 and abs(fc - 1.0) < 1e-12:
+        return struct
+    a, b, c, al, be, ga = struct.cell
+    return CifStructure(struct.name, (a * fa, b * fa, c * fc, al, be, ga),
+                        struct.atoms)
+
+
 def _build_residual(phases: list[CifStructure], pat: Pattern, base: ProfileParams,
-                    cfg: RefineConfig, history: list[float]):
-    """构造变量投影残差函数（闭包）。x = 启用的非线性参数 (zero?, U,V,W?, eta?)。"""
+                    cfg: RefineConfig, history: list[float], gen: list[int]):
+    """构造变量投影残差函数（闭包，含每相晶胞缩放缓存）。"""
     tt, yo = pat.two_theta, pat.intensity
     sig = cfg.sigma
     if sig is None:
         sig = np.sqrt(np.maximum(yo, 1.0))
+    cell_cache: dict[tuple, CifStructure] = {}
+
+    def scaled(si: int, fa: float, fc: float) -> CifStructure:
+        key = (si, round(fa, 9), round(fc, 9))
+        hit = cell_cache.get(key)
+        if hit is None:
+            hit = _scaled(phases[si], fa, fc)
+            cell_cache[key] = hit
+        return hit
 
     def residual_fn(x: np.ndarray) -> np.ndarray:
-        prm = _unpack(x, base, cfg)
-        rows = [compute_phase_profile(s, tt, prm, cfg.tmin, cfg.tmax)
-                for s in phases]
+        prm, cell = _unpack(x, base, cfg, len(phases))
+        rows = [compute_phase_profile(
+                    scaled(si, fa, fc), tt, prm, cfg.tmin, cfg.tmax)
+                for si, (fa, fc) in enumerate(cell)]
         basis = np.vstack(rows) if rows else np.zeros((0, tt.size))
         _coeffs, ycalc, _dropped = solve_linear_detail(
-            basis, tt, yo, sig, cfg.n_bg)
+            basis, tt, yo, sig, cfg.n_bg, cfg.bg_mode)
         # history 记录每次评估的 Rwp（GSAS-II 口径，背景计入）
-        history.append(compute_rfactors(
-            yo, ycalc, n_params=x.size + basis.shape[0] + cfg.n_bg).rwp)
+        rwp = compute_rfactors(
+            yo, ycalc, n_params=x.size + basis.shape[0] + cfg.n_bg).rwp
+        history.append(rwp)
+        gen[0] += 1
+        if cfg.on_iter is not None:
+            try:
+                cfg.on_iter(gen[0], rwp)
+            except Exception:
+                pass
         return (yo - ycalc) / sig
 
-    return residual_fn
+    return residual_fn, scaled
 
 
 def _rwp_at(phases: list[CifStructure], pat: Pattern, prm: ProfileParams,
             cfg: RefineConfig) -> float:
-    """给定非线性参数下的 Rwp（解一次线性层），用于重启选点。"""
+    """给定非线性参数下的 Rwp（解一次线性层），用于重启选点。
+
+    注意：重启选点评估不缩放晶胞（cell=1.0），只比较峰形参数的优劣。
+    """
     tt, yo = pat.two_theta, pat.intensity
     sig = cfg.sigma if cfg.sigma is not None else np.sqrt(np.maximum(yo, 1.0))
-    rows = [compute_phase_profile(s, tt, prm, cfg.tmin, cfg.tmax) for s in phases]
-    _coeffs, ycalc, _dropped = solve_linear_detail(np.vstack(rows), tt, yo,
-                                                   sig, cfg.n_bg)
+    rows = [compute_phase_profile(s, tt, prm, cfg.tmin, cfg.tmax)
+            for s in phases]
+    _coeffs, ycalc, _dropped = solve_linear_detail(
+        np.vstack(rows), tt, yo, sig, cfg.n_bg, cfg.bg_mode)
     return compute_rfactors(yo, ycalc, n_params=cfg.n_bg).rwp
 
 
@@ -146,7 +225,9 @@ def _restart_points(prm_try: ProfileParams) -> list[ProfileParams]:
         pts.append(ProfileParams(zero=prm_try.zero, U=u, V=0.0, W=w,
                                  eta=prm_try.eta, anode=prm_try.anode,
                                  ka_ratio=prm_try.ka_ratio, po_r=prm_try.po_r,
-                                 wavelength=prm_try.wavelength))
+                                 wavelength=prm_try.wavelength,
+                                 asym=prm_try.asym, bfactor=prm_try.bfactor,
+                                 integrated=prm_try.integrated))
     return pts
 
 
@@ -156,30 +237,68 @@ def refine(phases: list[CifStructure], pat: Pattern, prm0: ProfileParams,
 
     phases: 相列表（CifStructure，name 需与 prm0.po_r 的键对应）
     pat   : 实测/合成谱（Pattern）
-    prm0  : 非线性参数初值
-    cfg   : 精修开关
+    prm0  : 非线性参数初值（可含 asym/bfactor 初值）
+    cfg   : 精修开关（v1.0.0 起支持 bg_mode/asym/bfactor/cell/进度回调）
     """
+    if cfg.progress_cb is not None:
+        try:
+            cfg.progress_cb("正在初始化精修模型…", None)
+        except Exception:
+            pass
     history: list[float] = []
-    x0 = _pack(prm0, cfg)
-    residual_fn = _build_residual(phases, pat, prm0, cfg, history)
+    gen = [0]
+    n_phase = len(phases)
+    x0 = _pack(prm0, cfg, n_phase)
+    residual_fn, scaled_fn = _build_residual(phases, pat, prm0, cfg, history, gen)
 
     if x0.size:
-        lo, hi = _bounds(cfg)
-        lm = lm_minimize(residual_fn, x0, bounds=(lo, hi),
-                         max_iter=cfg.max_iter)
-        best_x, best_cost, success = lm.x, lm.cost, lm.success
+        lo, hi = _bounds(cfg, n_phase)
+        use_scipy = False
+        if cfg.backend == "scipy":
+            try:
+                from scipy.optimize import least_squares
+                use_scipy = True
+            except Exception:
+                use_scipy = False
+        if use_scipy:
+            # scipy trf 后端：真实数据（多相关联形状参数）上明显更稳，
+            # 能守住内部解不落入 U,V→0 角点（v1.0.0 实证，Rwp 11.6→9.5%）。
+            nfev = [0]
+
+            def counted(xv):
+                nfev[0] += 1
+                if (cfg.progress_cb is not None and nfev[0] % 40 == 0):
+                    try:
+                        cfg.progress_cb(
+                            f"正在 Rietveld 全谱拟合（已评估 {nfev[0]} 次）…", None)
+                    except Exception:
+                        pass
+                return residual_fn(xv)
+
+            sr = least_squares(counted, x0, bounds=(lo, hi), method="trf",
+                               x_scale="jac", max_nfev=3000)
+            best_x, best_cost, success = sr.x, float(sr.cost), bool(sr.success)
+        else:
+            lm = lm_minimize(residual_fn, x0, bounds=(lo, hi),
+                             max_iter=cfg.max_iter)
+            best_x, best_cost, success = lm.x, lm.cost, lm.success
         # ---- 多起点重启（仅 refine_uvw）: 角点陷阱检测 ----
         restarted = False
         if cfg.refine_uvw:
-            prm_try = _unpack(best_x, prm0, cfg)
-            stuck = ((not success) or prm_try.W <= 2.0 * MIN_W
-                     or _rwp_at(phases, pat, prm_try, cfg) > 10.0)
+            prm_try, _cell = _unpack(best_x, prm0, cfg, n_phase)
+            stuck = (not success) or prm_try.W <= 2.0 * MIN_W
+            if not stuck:
+                # 用含晶胞缩放的完整模型重评估一次（_rwp_at 不缩放晶胞，
+                # 会在正常收敛点误报 >10% 而触发无用的 LM 重启）
+                residual_fn(best_x)
+                stuck = history[-1] > 10.0
             if stuck:
                 restarted = True
                 for cand in _restart_points(prm_try):
-                    r2 = _build_residual(phases, pat, cand, cfg, history)
-                    lm2 = lm_minimize(r2, _pack(cand, cfg), bounds=(lo, hi),
-                                      max_iter=cfg.max_iter)
+                    r2, _sf2 = _build_residual(phases, pat, cand, cfg,
+                                               history, gen)
+                    lm2 = lm_minimize(r2, _pack(cand, cfg, n_phase),
+                                      bounds=(lo, hi), max_iter=cfg.max_iter)
                     if lm2.cost < best_cost:
                         best_x, best_cost = lm2.x, lm2.cost
                         success = lm2.success
@@ -189,18 +308,26 @@ def refine(phases: list[CifStructure], pat: Pattern, prm0: ProfileParams,
         restarted = False
         residual_fn(best_x)
 
-    prm = _unpack(best_x, prm0, cfg)
-    rows = [compute_phase_profile(s, pat.two_theta, prm, cfg.tmin, cfg.tmax)
-            for s in phases]
+    prm, cell_scales = _unpack(best_x, prm0, cfg, n_phase)
+    if cfg.progress_cb is not None:
+        try:
+            cfg.progress_cb("正在合成最终计算谱…", 0.95)
+        except Exception:
+            pass
+    rows = [compute_phase_profile(
+                _scaled(phases[si], fa, fc), pat.two_theta, prm,
+                cfg.tmin, cfg.tmax)
+            for si, (fa, fc) in enumerate(cell_scales)]
     basis = np.vstack(rows)
     coeffs, ycalc, dropped = solve_linear_detail(
         basis, pat.two_theta, pat.intensity,
         cfg.sigma if cfg.sigma is not None else np.sqrt(
-            np.maximum(pat.intensity, 1.0)), cfg.n_bg)
+            np.maximum(pat.intensity, 1.0)), cfg.n_bg, cfg.bg_mode)
     n_p = best_x.size + basis.shape[0] + cfg.n_bg
     rf = compute_rfactors(pat.intensity, ycalc, n_params=n_p,
                           sigma=cfg.sigma, include_bg=True)
     return RefineResult(params=prm, scales=coeffs[:basis.shape[0]].copy(),
                         bg=coeffs[basis.shape[0]:].copy(), ycalc=ycalc,
                         rf=rf, success=success, history=history,
-                        phase_dropped=dropped, restarted=restarted)
+                        phase_dropped=dropped, restarted=restarted,
+                        cell_scales=cell_scales, iters=gen[0])

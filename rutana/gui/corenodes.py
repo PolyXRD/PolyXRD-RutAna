@@ -67,6 +67,12 @@ def core_symbol(key: str) -> Any:
         if key == "profile.forward.ProfileParams":
             from rutana.core.profile.forward import ProfileParams
             return ProfileParams
+        if key == "refine.realdata.real_params":
+            from rutana.core.refine.realdata import real_params
+            return real_params
+        if key == "refine.realdata.real_config":
+            from rutana.core.refine.realdata import real_config
+            return real_config
         if key == "refine.nonlinear.RefineConfig":
             from rutana.core.refine.nonlinear import RefineConfig
             return RefineConfig

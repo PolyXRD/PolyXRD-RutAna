@@ -69,7 +69,7 @@ D:/Project/XRD/python310/python.exe tools/bench_b.py             # B 法 8 配�
 | 卡 | 内容 | 状态 |
 |---|---|---|
 | T0.1 | 仓库骨架与依赖锁定 | ✅ |
-| T0.2 | 标准条款逐字冻结（STD_FREEZE.md） | ⬜ 遗留项：重复性限 0.15% 等待标准原文核对 |
+| T0.2 | 标准条款逐字冻结（STD_FREEZE.md） | ✅（重复性限按 §9.1 原文修正为 0.18%） |
 | T0.3 | 核心数据类型 dtypes | ✅ |
 | T1.1 | 谱读取器 patterns | ✅ |
 | T1.2 | 虚拟实验室 gen_virtual | ✅ |
@@ -77,7 +77,7 @@ D:/Project/XRD/python310/python.exe tools/bench_b.py             # B 法 8 配�
 | T2.1–T2.7 | A 法全链（背景/净峰/K 标定/结果/基准/CLI/平滑） | ✅ |
 | T3.1–T3.3 | B 法前向模型 + 内置 CIF | ✅ |
 | T4.1–T4.6, T4.8 | B 法精修引擎 + QPA + 性能 | ✅ |
-| T4.7 | 晶胞/择优取向精修 | ⬜ v1.1 规划 |
+| T4.7 | 晶胞/择优取向精修 | ✅（v1.0.0：每相 a,c 缩放精修；择优取向 v1.1 规划） |
 | T5.x | 合规判定 / 报告导出 / 台账 | ✅（GUI 导出 HTML/CSV/PNG） |
 | T6.x | PySide6 GUI + 三语 i18n + 关于/版权 | ✅ |
 | T7.x | QA 两轮回归 + 打包验证 | ✅（实样 L3 交叉验证待实验排期） |

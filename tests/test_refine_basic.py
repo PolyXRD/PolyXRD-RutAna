@@ -29,7 +29,7 @@ def v50_result():
     cfg = RefineConfig(refine_zero=True, refine_uvw=True, refine_eta=False,
                        n_bg=3, max_iter=40)
     t0 = time.perf_counter()
-    res = refine([st_a, st_r], pat, ProfileParams(), cfg)
+    res = refine([st_a, st_r], pat, ProfileParams(integrated=False), cfg)
     return res, time.perf_counter() - t0
 
 
@@ -100,7 +100,7 @@ def test_negative_scale_refine_drops_phase():
     st_a, st_r = bench_b.load_builtin_structs()
     pat = bench_b._load_pattern(bench_b.VIRTUAL_B / "v0.1_wide.xy")
     cfg = RefineConfig(n_bg=3, max_iter=40)
-    res = refine([st_a, st_r], pat, ProfileParams(), cfg)
+    res = refine([st_a, st_r], pat, ProfileParams(integrated=False), cfg)
     assert res.success
     assert res.scales[0] >= 0.0 and res.scales[1] >= 0.0
     assert res.rf.rwp <= 10.0

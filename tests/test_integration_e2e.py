@@ -88,7 +88,7 @@ class TestMethodBE2E:
         za, va, ma_ = qpa_inputs_from_cif(st_a, "O2 Ti")
         zr, vr, mr_ = qpa_inputs_from_cif(st_r, "O2 Ti")
         assert (za, zr) == (4, 2)  # QPA 的 Z 前提（★酸检）
-        res = refine([st_a, st_r], pat, ProfileParams(), RefineConfig())
+        res = refine([st_a, st_r], pat, ProfileParams(integrated=False), RefineConfig())
         assert res.ycalc.shape == pat.intensity.shape  # ycalc 与谱等长
         assert res.rf.rwp <= 10.0  # 标准硬条款
         ws = qpa_weights([(st_a.name, res.scales[0], za, va, ma_),
