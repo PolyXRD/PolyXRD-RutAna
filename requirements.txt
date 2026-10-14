@@ -1,0 +1,6 @@
+# PolyXRD RutAna 运行依赖（环境 D:/Project/XRD/python310 已预装，此文件用于锁定与 CI）
+numpy==2.2.6
+scipy==1.15.3
+matplotlib==3.10.9
+PySide6==6.11.2
+pytest>=8.0

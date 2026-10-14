@@ -1,0 +1,364 @@
+"""PolyXRD RutAna 主窗口。
+
+布局：左侧导入谱图与文件列表；中部 matplotlib 画布；右侧 QTabWidget
+（A 法 / B 法）。菜单：文件 / 语言（运行时热切换）/ 帮助（关于、版权）。
+状态栏显示当前语言与文件路径。所有 core 交互经 ``rutana.gui.services``。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QActionGroup, QIcon
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from rutana.gui import services
+from rutana.gui.canvas import PatternCanvas
+from rutana.gui.dialogs import AboutDialog, CopyrightDialog
+from rutana.gui.exports import ExportMixin, a_rows
+from rutana.gui.panels import MethodTabs
+from rutana.gui.resources import resource_path
+from rutana.i18n import (
+    available_languages,
+    current_language,
+    load_language,
+    save_language,
+    set_language,
+    tr,
+)
+from rutana.version import APP_NAME, __version__
+
+LANG_ORDER = ("zh_CN", "en_US", "ja_JP")
+
+
+class MainWindow(ExportMixin, QMainWindow):
+    """主窗口：导入 → 计算 → 出结果三击可达。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        load_language()
+        self._patterns: dict[str, object] = {}   # {路径: Pattern}，保持插入序
+        self._last_a: dict | None = None         # 最近一次 A 法汇总
+        self._last_b: dict | None = None         # 最近一次 B 法汇总
+        self._build_actions()
+        self._build_menus()
+        self._build_central()
+        self._build_status()
+        self.retranslateUi()
+
+    # ------------------------------------------------------------------ #
+    # 构建界面
+    # ------------------------------------------------------------------ #
+    def _build_actions(self) -> None:
+        """创建全部 QAction（文案在 retranslateUi 中统一设置）。"""
+        self.act_open = QAction(self)
+        self.act_open.triggered.connect(self._on_open)
+        self.act_export_html = QAction(self)
+        self.act_export_html.triggered.connect(self._on_export_html)
+        self.act_export_csv = QAction(self)
+        self.act_export_csv.triggered.connect(self._on_export_csv)
+        self.act_export_png = QAction(self)
+        self.act_export_png.triggered.connect(self._on_export_png)
+        self.act_exit = QAction(self)
+        self.act_exit.triggered.connect(self.close)
+
+        self.act_about = QAction(self)
+        self.act_about.triggered.connect(self._on_about)
+        self.act_copyright = QAction(self)
+        self.act_copyright.triggered.connect(self._on_copyright)
+
+        # 语言组（互斥、可勾选）
+        self.lang_group = QActionGroup(self)
+        self.lang_group.setExclusive(True)
+        self.act_langs: dict[str, QAction] = {}
+        for code in LANG_ORDER:
+            act = QAction(self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda _checked=False, c=code: self._on_language(c))
+            self.lang_group.addAction(act)
+            self.act_langs[code] = act
+
+    def _build_menus(self) -> None:
+        """组装三条菜单。"""
+        self.menu_file = self.menuBar().addMenu("")
+        self.menu_file.addAction(self.act_open)
+        self.menu_file.addSeparator()
+        self.menu_file.addAction(self.act_export_html)
+        self.menu_file.addAction(self.act_export_csv)
+        self.menu_file.addAction(self.act_export_png)
+        self.menu_file.addSeparator()
+        self.menu_file.addAction(self.act_exit)
+
+        self.menu_language = self.menuBar().addMenu("")
+        for code in LANG_ORDER:
+            self.menu_language.addAction(self.act_langs[code])
+
+        self.menu_help = self.menuBar().addMenu("")
+        self.menu_help.addAction(self.act_about)
+        self.menu_help.addAction(self.act_copyright)
+
+    def _build_central(self) -> None:
+        """三栏布局：文件列表 | 画布 | 参数/结果选项卡。"""
+        splitter = QSplitter(Qt.Horizontal, self)
+
+        # 左：导入谱图
+        left = QWidget(self)
+        lv = QVBoxLayout(left)
+        self.grp_files = QGroupBox(left)
+        fv = QVBoxLayout(self.grp_files)
+        self.file_list = QListWidget(self.grp_files)
+        self.file_list.currentRowChanged.connect(self._on_file_selected)
+        fv.addWidget(self.file_list)
+        hb = QHBoxLayout()
+        self.btn_add = QPushButton(self.grp_files)
+        self.btn_add.clicked.connect(self._on_open)
+        self.btn_remove = QPushButton(self.grp_files)
+        self.btn_remove.clicked.connect(self._on_remove_file)
+        self.btn_clear = QPushButton(self.grp_files)
+        self.btn_clear.clicked.connect(self._on_clear_files)
+        for w in (self.btn_add, self.btn_remove, self.btn_clear):
+            hb.addWidget(w)
+        fv.addLayout(hb)
+        lv.addWidget(self.grp_files)
+        splitter.addWidget(left)
+
+        # 中：画布
+        self.canvas = PatternCanvas(self)
+        splitter.addWidget(self.canvas)
+
+        # 右：A/B 法选项卡
+        self.tabs = MethodTabs(self)
+        self.tabs.a_panel.compute_requested.connect(self._on_a_compute)
+        self.tabs.a_panel.k_calibrate_requested.connect(self._on_k_calibrate)
+        self.tabs.b_panel.run_requested.connect(self._on_b_run)
+        splitter.addWidget(self.tabs)
+
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([210, 520, 330])
+        self.setCentralWidget(splitter)
+        icon = resource_path("app-icon.png")
+        if icon.exists():
+            self.setWindowIcon(QIcon(str(icon)))
+
+    def _build_status(self) -> None:
+        """状态栏：左语言、右文件路径。"""
+        self.lbl_lang = QLabel(self)
+        self.lbl_file = QLabel(self)
+        self.statusBar().addWidget(self.lbl_lang, 0)
+        self.statusBar().addWidget(self.lbl_file, 1)
+
+    # ------------------------------------------------------------------ #
+    # 多语言
+    # ------------------------------------------------------------------ #
+    def retranslateUi(self) -> None:
+        """语言切换后刷新全部文案（菜单/按钮/表头/状态栏/画布）。"""
+        self.setWindowTitle(f"{APP_NAME} v{__version__} · {tr('app.title')}")
+        self.menu_file.setTitle(tr("menu.file"))
+        self.menu_language.setTitle(tr("menu.language"))
+        self.menu_help.setTitle(tr("menu.help"))
+        self.act_open.setText(tr("menu.file.open"))
+        self.act_export_html.setText(tr("menu.file.export_html"))
+        self.act_export_csv.setText(tr("menu.file.export_csv"))
+        self.act_export_png.setText(tr("menu.file.export_png"))
+        self.act_exit.setText(tr("menu.file.exit"))
+        self.act_about.setText(tr("menu.help.about"))
+        self.act_copyright.setText(tr("menu.help.copyright"))
+        for code, act in self.act_langs.items():
+            act.setText(tr(f"lang.{code}"))
+            act.setChecked(code == current_language())
+        self.grp_files.setTitle(tr("panel.files"))
+        self.btn_add.setText(tr("panel.files.add"))
+        self.btn_remove.setText(tr("panel.files.remove"))
+        self.btn_clear.setText(tr("panel.files.clear"))
+        self.tabs.retranslate()
+        self.canvas.retranslate()
+        self.lbl_lang.setText(tr("status.lang", lang=tr(f"lang.{current_language()}")))
+
+    # ------------------------------------------------------------------ #
+    # 槽：文件
+    # ------------------------------------------------------------------ #
+    def _on_open(self) -> None:
+        """打开谱图（可多选），经 services 读取，失败弹中文提示。"""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, tr("dlg.open_pattern"), "", tr("filter.pattern"))
+        if not paths:
+            return
+        last_ok: str | None = None
+        for p in paths:
+            try:
+                pat = services.load_pattern(p)
+            except services.CoreUnavailableError as exc:
+                self._msg("msg.core_unavailable", str(exc), error=True)
+                continue
+            except Exception as exc:  # noqa: BLE001 —— 统一转成用户可读提示
+                self._msg("msg.load_fail", str(exc), error=True)
+                continue
+            self._patterns[p] = pat
+            self.file_list.addItem(Path(p).name)
+            last_ok = p
+        if last_ok:
+            self.file_list.setCurrentRow(list(self._patterns).index(last_ok))
+
+    def _on_remove_file(self) -> None:
+        row = self.file_list.currentRow()
+        if row < 0:
+            return
+        path = list(self._patterns)[row]
+        del self._patterns[path]
+        self.file_list.takeItem(row)
+        self._refresh_canvas()
+
+    def _on_clear_files(self) -> None:
+        self._patterns.clear()
+        self.file_list.clear()
+        self._refresh_canvas()
+
+    def _on_file_selected(self, row: int) -> None:
+        if 0 <= row < len(self._patterns):
+            self._refresh_canvas()
+
+    def _refresh_canvas(self) -> None:
+        """按当前选中项刷新画布与状态栏文件显示。"""
+        path = self._current_path()
+        if path is None:
+            self.canvas.clear()
+            self.lbl_file.setText(tr("status.ready"))
+            return
+        pat = self._patterns[path]
+        self.canvas.show_pattern(np.asarray(pat.two_theta), np.asarray(pat.intensity))
+        self.lbl_file.setText(tr("status.file", path=path))
+
+    def _current_path(self) -> str | None:
+        row = self.file_list.currentRow()
+        if 0 <= row < len(self._patterns):
+            return list(self._patterns)[row]
+        return None
+
+    def _current_pattern(self):
+        path = self._current_path()
+        return self._patterns[path] if path else None
+
+    # ------------------------------------------------------------------ #
+    # 槽：A 法
+    # ------------------------------------------------------------------ #
+    def _on_k_calibrate(self, points: list) -> None:
+        """由标定表计算 K。"""
+        if len(points) < 3:
+            self._msg("msg.k_points")
+            return
+        try:
+            res = services.calibrate_from_points(points)
+        except services.CoreUnavailableError as exc:
+            self._msg("msg.core_unavailable", str(exc), error=True)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._msg("msg.k_calib_fail", str(exc), error=True)
+            return
+        self.tabs.a_panel.set_k(res.K, res.r2)
+
+    def _on_a_compute(self) -> None:
+        """A 法：当前谱计算；若已导入两份谱则做双平行合并。"""
+        pat = self._current_pattern()
+        if pat is None:
+            self._msg("msg.need_pattern")
+            return
+        params = self.tabs.a_panel.params()
+        k = self.tabs.a_panel.current_k()
+        try:
+            data = services.run_method_a(pat, params["win_a"], params["win_r"], k)
+            dup = None
+            pats = list(self._patterns.values())
+            if len(pats) >= 2:
+                other = pats[1] if pats[0] is pat else pats[0]
+                data2 = services.run_method_a(other, params["win_a"], params["win_r"], k)
+                dup = services.combine_duplicates(data["result"], data2["result"])
+            self.tabs.a_panel.set_result_a(data["result"], dup)
+            self._last_a = {
+                "sample": Path(self._current_path() or "").stem,
+                "file": self._current_path() or "",
+                "rows": a_rows(data["result"], dup),
+                "verdict": (tr("verdict.pass") if dup and dup["within_limit"]
+                            else tr("verdict.fail") if dup else tr("verdict.na")),
+            }
+        except services.CoreUnavailableError as exc:
+            self._msg("msg.core_unavailable", str(exc), error=True)
+        except Exception as exc:  # noqa: BLE001
+            self._msg("msg.compute_fail", str(exc), error=True)
+
+    # ------------------------------------------------------------------ #
+    # 槽：B 法
+    # ------------------------------------------------------------------ #
+    def _on_b_run(self) -> None:
+        """B 法：Rietveld 精修，完成后画布叠加计算谱与差值线。"""
+        pat = self._current_pattern()
+        if pat is None:
+            self._msg("msg.need_pattern")
+            return
+        params = self.tabs.b_panel.params()
+        self.tabs.b_panel.set_busy(True)
+        try:
+            data = services.run_method_b(pat, **params)
+            rf = data["result"].rf
+            self.tabs.b_panel.set_rfactors(rf.rwp, rf.rp, rf.chi2)
+            self.canvas.show_fit(np.asarray(data["two_theta"]),
+                                 np.asarray(pat.intensity),
+                                 np.asarray(data["ycalc"]),
+                                 np.asarray(data["diff"]))
+            self._last_b = {
+                "sample": Path(self._current_path() or "").stem,
+                "file": self._current_path() or "",
+                "rows": [
+                    (tr("result.rwp"), f"{rf.rwp:.2f}"),
+                    (tr("result.rp"), f"{rf.rp:.2f}"),
+                    (tr("result.chi2"), f"{rf.chi2:.3f}"),
+                ],
+                "verdict": tr("verdict.pass") if rf.rwp <= 10.0 else tr("verdict.fail"),
+            }
+        except services.CoreUnavailableError as exc:
+            self._msg("msg.core_unavailable", str(exc), error=True)
+        except Exception as exc:  # noqa: BLE001
+            self._msg("msg.refine_fail", str(exc), error=True)
+        finally:
+            self.tabs.b_panel.set_busy(False)
+
+    # ------------------------------------------------------------------ #
+    # 槽：语言与帮助
+    # ------------------------------------------------------------------ #
+    def _on_language(self, code: str) -> None:
+        set_language(code)
+        save_language(code)
+        self.retranslateUi()
+
+    def _on_about(self) -> None:
+        AboutDialog(self).exec()
+
+    def _on_copyright(self) -> None:
+        CopyrightDialog(self).exec()
+
+    # ------------------------------------------------------------------ #
+    # 工具
+    # ------------------------------------------------------------------ #
+    def _msg(self, key: str, detail: str | None = None, error: bool = False) -> None:
+        """统一弹窗：error=True 用错误样式，detail 填充 {detail} 占位。"""
+        text = tr(key, detail=detail) if detail is not None else tr(key)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical if error else QMessageBox.Information)
+        box.setWindowTitle(tr("msg.error") if error else tr("msg.info"))
+        box.setText(text)
+        box.exec()

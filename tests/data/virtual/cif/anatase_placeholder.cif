@@ -1,0 +1,31 @@
+# 锐钛型 TiO2 占位 CIF —— I41/amd (141), a=3.7845 c=9.5143
+# Ti 4a 与 O 8e 全部等价位置已手工列出（原点取 Ti 4a）。
+data_anatase_placeholder
+_cell_length_a 3.7845
+_cell_length_b 3.7845
+_cell_length_c 9.5143
+_cell_angle_alpha 90.0
+_cell_angle_beta 90.0
+_cell_angle_gamma 90.0
+_symmetry_space_group_name_H-M 'I 41/a m d'
+loop_
+_symmetry_equiv_pos_as_xyz
+'x, y, z'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Ti1 Ti 0.0 0.0 0.0
+Ti2 Ti 0.0 0.5 0.25
+Ti3 Ti 0.5 0.5 0.5
+Ti4 Ti 0.5 0.0 0.75
+O1 O 0.0 0.0 0.2081
+O2 O 0.0 0.0 0.7919
+O3 O 0.0 0.5 0.4581
+O4 O 0.0 0.5 0.0419
+O5 O 0.5 0.5 0.7081
+O6 O 0.5 0.5 0.2919
+O7 O 0.5 0.0 0.9581
+O8 O 0.5 0.0 0.5419

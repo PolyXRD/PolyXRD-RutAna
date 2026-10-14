@@ -1,0 +1,25 @@
+# 金红石型 TiO2 占位 CIF —— P42/mnm (136), a=4.5937 c=2.9587
+# Ti 2a 与 O 4f 全部等价位置已手工列出。
+data_rutile_placeholder
+_cell_length_a 4.5937
+_cell_length_b 4.5937
+_cell_length_c 2.9587
+_cell_angle_alpha 90.0
+_cell_angle_beta 90.0
+_cell_angle_gamma 90.0
+_symmetry_space_group_name_H-M 'P 42/m n m'
+loop_
+_symmetry_equiv_pos_as_xyz
+'x, y, z'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Ti1 Ti 0.0 0.0 0.0
+Ti2 Ti 0.5 0.5 0.5
+O1 O 0.3053 0.3053 0.0
+O2 O 0.6947 0.6947 0.0
+O3 O 0.8053 0.1947 0.5
+O4 O 0.1947 0.8053 0.5
