@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import rutana.i18n.i18n_manager as m
 from rutana.i18n import (
@@ -12,6 +14,7 @@ from rutana.i18n import (
     tr,
 )
 from rutana.i18n.translations import en_US, ja_JP, zh_CN
+from rutana.version import __version__
 
 LANGS = ("zh_CN", "en_US", "ja_JP")
 TABLES = {
@@ -19,6 +22,29 @@ TABLES = {
     "en_US": en_US.TRANSLATIONS,
     "ja_JP": ja_JP.TRANSLATIONS,
 }
+
+#: v1.0.0 起的最低键数基线（进度窗 / K 说明 / K 标定向导 / 结果卡增强）
+MIN_KEY_COUNT = 183
+
+#: v1.0.0 必须存在的关键键（漏一个就意味着新功能文案没收口）
+V1_REQUIRED_KEYS = (
+    # 忙对话框
+    "busy.title", "busy.title_refine", "busy.elapsed", "busy.degraded",
+    "busy.load", "busy.measure", "busy.ratio", "busy.refine", "busy.report",
+    "busy.cancel", "busy.canceling", "msg.busy_canceled", "status.computing",
+    # K 值说明
+    "khelp.title", "khelp.formula_k", "khelp.formula_wa", "khelp.typical",
+    "khelp.open_doc", "khelp.doc_missing",
+    # K 标定向导
+    "kwizard.title", "kwizard.measure", "kwizard.fit.ols", "kwizard.fit.origin",
+    "kwizard.result", "kwizard.warn_r2", "kwizard.adopt", "kwizard.saved",
+    "kwizard.load_fail", "kwizard.adopted", "kwizard.min_points",
+    # 面板入口与结果卡增强
+    "a.k_help", "a.k_wizard", "a.k.source_manual", "a.k.source_calib",
+    "a.ref_enable", "result.ia_ir", "result.r2", "result.ref_label",
+    "result.ref_err", "result.fit_verdict",
+    "verdict.fit_good", "verdict.fit_bad",
+)
 
 
 def test_key_sets_identical():
@@ -37,6 +63,49 @@ def test_values_nonempty():
     for lang, table in TABLES.items():
         for key, value in table.items():
             assert isinstance(value, str) and value.strip(), f"{lang}.{key} 为空"
+
+
+def test_v1_keys_present_in_all_languages():
+    """v1.0.0 新增功能的键必须在三语中齐备（漏译立即暴露）。"""
+    for lang in LANGS:
+        missing = [k for k in V1_REQUIRED_KEYS if k not in TABLES[lang]]
+        assert not missing, f"{lang} 缺失 v1.0.0 键: {missing}"
+
+
+def test_key_count_meets_minimum():
+    """键总数不低于 v1.0.0 基线（防止后续误删整段文案）。"""
+    for lang in LANGS:
+        assert len(TABLES[lang]) >= MIN_KEY_COUNT, f"{lang} 键数低于基线"
+
+
+def test_placeholders_consistent():
+    """同一 key 的三语占位符必须一致（否则 tr(..., ) 会 KeyError）。"""
+    pat = re.compile(r"\{(\w+)(?:[:}])")
+    for key in sorted(set(TABLES["zh_CN"])):
+        names = {lang: tuple(sorted(pat.findall(TABLES[lang][key])))
+                 for lang in LANGS}
+        assert names["zh_CN"] == names["en_US"] == names["ja_JP"], (
+            f"{key} 占位符在三语中不一致: {names}")
+
+
+def test_version_is_100():
+    """版本号已推进到 1.0.0（资源/文档/EXE 名统一取这里）。"""
+    assert __version__ == "1.0.0"
+
+
+def test_all_code_keys_defined_in_all_languages():
+    """源码里出现的每个 tr("key") 都必须在三语表中（防漏译/拼错）。"""
+    pat = re.compile(r'tr\(\s*"([A-Za-z0-9_.]+)"')
+    root = Path(__file__).resolve().parent.parent / "rutana"
+    missing: dict[str, list[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for key in sorted(set(pat.findall(text))):
+            for lang, table in TABLES.items():
+                if key not in table:
+                    missing.setdefault(str(path.relative_to(root.parent)), []).append(
+                        f"{key}@{lang}")
+    assert not missing, f"以下文案键未定义: {missing}"
 
 
 def test_tr_basic():

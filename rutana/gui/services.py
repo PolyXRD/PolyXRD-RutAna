@@ -6,80 +6,131 @@ core 未就绪/缺失时抛 ``CoreUnavailableError``（中文提示），从而�
 
 1. GUI 模块本身不依赖 core 即可被导入与构造；
 2. 冒烟测试可用 ``unittest.mock.patch`` 桩掉本模块的全部函数。
+
+v1.0.0 新增（进度反馈）：全部耗时函数统一接受 ``progress_cb`` / ``on_iter`` /
+``cancel_cb`` 三个**可选**回调（在参数列表最后，默认 None）。
+
+**进度值协议**（与 ``rutana.core.peakmeasure`` 一致）：``progress_cb(msg, pct)``
+中 ``pct`` 为 **0..1 的比例**（``None`` 或负值表示不确定）。GUI 侧由
+:mod:`rutana.gui.workers` 统一归一化为 0..100 百分比后驱动进度条，
+因此 core 若改用百分比写法（0..100）也能被同一适配层兼容。
+
+本模块用 :func:`supports_param` 探测 core 是否支持这些回调，**不支持即静默降级**
+（只在阶段级别回调，粒度粗但不报错），因此 core 升级前后都能正常工作。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
+from rutana.gui.corenodes import CoreUnavailableError, core_symbol, supports_param
 from rutana.i18n import tr
 
 #: 双平行重复性限缺省值（core 未就绪时的兜底；core 内的 DEFAULT_ABS_LIMIT 优先）
 FALLBACK_ABS_LIMIT = 0.15
 
+#: B 法 Rwp 拟合良好阈值（%）
+RWP_GOOD_LIMIT = 10.0
 
-class CoreUnavailableError(RuntimeError):
-    """核心算法模块缺失或导入失败（提示文案已本地化）。"""
+#: 进度回调签名 cb(message: str, pct: float | None)（pct 为 0..1 比例）
+ProgressCb = Callable[[str, "float | None"], None] | None
+
+
+class TaskCanceled(RuntimeError):
+    """用户请求取消且底层 core 响应了取消（由 core 抛或本模块转抛）。"""
 
 
 def _core(key: str) -> Any:
-    """按显式静态 import 映射取 core 符号；失败统一抛本地化异常。
+    """取 core 符号（实现见 :mod:`rutana.gui.corenodes`）。"""
+    return core_symbol(key)
 
-    P1-1 修复：原实现用 ``importlib.import_module(f"rutana.core.{module}")``
-    的 f-string 动态导入，PyInstaller 静态分析跟不了，导致 exe 里
-    A 法测峰与整个 B 法抛 CoreUnavailableError。现改为模块名字面量的
-    ``from ... import ...`` 语句，PyInstaller 可完整静态跟踪。
-    key 形如 ``"patterns.load_pattern"``（模块点路径.符号名）。
-    """
+
+def _try_core(key: str) -> Any:
+    """取 core 符号；core 未就绪返回 None（用于能力探测，不弹错）。"""
     try:
-        if key == "patterns.load_pattern":
-            from rutana.core.patterns import load_pattern
-            return load_pattern
-        if key == "peakmeasure.measure_peak":
-            from rutana.core.peakmeasure import measure_peak
-            return measure_peak
-        if key == "method_a.compute_ratio":
-            from rutana.core.method_a import compute_ratio
-            return compute_ratio
-        if key == "method_a.CalibPoint":
-            from rutana.core.method_a import CalibPoint
-            return CalibPoint
-        if key == "method_a.calibrate_k":
-            from rutana.core.method_a import calibrate_k
-            return calibrate_k
-        if key == "method_a.combine_duplicates":
-            from rutana.core.method_a import combine_duplicates
-            return combine_duplicates
-        if key == "profile.cif.parse_cif":
-            from rutana.core.profile.cif import parse_cif
-            return parse_cif
-        if key == "profile.forward.ProfileParams":
-            from rutana.core.profile.forward import ProfileParams
-            return ProfileParams
-        if key == "refine.nonlinear.RefineConfig":
-            from rutana.core.refine.nonlinear import RefineConfig
-            return RefineConfig
-        if key == "refine.nonlinear.refine":
-            from rutana.core.refine.nonlinear import refine
-            return refine
-    except Exception as exc:  # ImportError / AttributeError / core 内部依赖缺失
-        raise CoreUnavailableError(tr("msg.core_unavailable", detail=exc)) from exc
-    raise KeyError(f"未注册的 core 符号: {key}")
+        return _core(key)
+    except Exception:  # noqa: BLE001 —— 能力探测失败即视为不支持
+        return None
+
+
+def _emit(cb: ProgressCb, key: str, pct: float | None = None, **kw) -> None:
+    """安全地向回调推送一条本地化阶段文案（cb 为空则忽略；pct 为 0..1）。"""
+    if cb is None:
+        return
+    text = tr(key, **kw) if kw else tr(key)
+    cb(text, None if pct is None else float(pct))
+
+
+def sub_progress(cb: ProgressCb, lo: float, hi: float) -> ProgressCb:
+    """把子步骤的 0..1 进度线性映射到 ``[lo, hi]`` 比例区间。
+
+    用于把 core 单峰测峰的 0..1 进度嵌入整体流程（如第一个峰 0.10..0.45、
+    第二个峰 0.50..0.90），避免进度条在双峰测量时来回跳动。
+    """
+    if cb is None:
+        return None
+
+    def inner(msg: str, pct: float | None = None) -> None:
+        try:
+            value = float(pct) if pct is not None else -1.0
+        except (TypeError, ValueError):
+            value = -1.0
+        if value < 0.0:
+            out: float | None = None
+        else:
+            out = lo + (hi - lo) * min(1.0, value)
+        cb(str(msg), out)
+
+    return inner
+
+
+def supports_progress(method: str) -> bool:
+    """核心<a>/<b>是否支持 ``progress_cb``。不支持时 UI 走不确定模式。"""
+    if method == "a":
+        fn = _try_core("peakmeasure.measure_peak")
+        return fn is not None and supports_param(fn, "progress_cb")
+    fn = _try_core("refine.nonlinear.refine")
+    return fn is not None and supports_param(fn, "progress_cb")
+
+
+def supports_iteration(method: str = "b") -> bool:
+    """是否支持 B 法的 ``on_iter(gen, rwp)`` 逐代回调。"""
+    if method != "b":
+        return False
+    fn = _try_core("refine.nonlinear.refine")
+    return fn is not None and supports_param(fn, "on_iter")
+
+
+def supports_cancel(method: str) -> bool:
+    """是否支持 ``cancel_cb``。据此决定是否显示「取消」按钮。"""
+    if method == "a":
+        fn = _try_core("peakmeasure.measure_peak")
+        return fn is not None and supports_param(fn, "cancel_cb")
+    fn = _try_core("refine.nonlinear.refine")
+    return fn is not None and supports_param(fn, "cancel_cb")
 
 
 # --------------------------------------------------------------------------- #
 # A 法（强度比值法）
 # --------------------------------------------------------------------------- #
-def load_pattern(path: str) -> Any:
+def load_pattern(path: str, progress_cb: ProgressCb = None) -> Any:
     """读取谱图文件 -> rutana.core.dtypes.Pattern。"""
+    _emit(progress_cb, "busy.load", 0.05)
     load = _core("patterns.load_pattern")
     return load(path)
 
 
-def measure_peak(pat: Any, expected: float, tol: float = 0.4) -> Any:
+def measure_peak(pat: Any, expected: float, tol: float = 0.4,
+                 progress_cb: ProgressCb = None,
+                 cancel_cb: Callable[[], bool] | None = None) -> Any:
     """在 [expected-tol, expected+tol] 内测量净峰强度 -> PeakMeasure。"""
     measure = _core("peakmeasure.measure_peak")
-    return measure(pat, expected, tol)
+    kwargs: dict[str, Any] = {}
+    if supports_param(measure, "progress_cb"):
+        kwargs["progress_cb"] = progress_cb
+    if cancel_cb is not None and supports_param(measure, "cancel_cb"):
+        kwargs["cancel_cb"] = cancel_cb
+    return measure(pat, expected, tol, **kwargs)
 
 
 def compute_ratio(ia: float, ir: float, k: float) -> Any:
@@ -88,11 +139,19 @@ def compute_ratio(ia: float, ir: float, k: float) -> Any:
     return compute(ia, ir, k)
 
 
-def calibrate_from_points(points: list[tuple[float, float]]) -> Any:
-    """由标定表 [(ma_over_mr, ia_over_ir), ...] 计算 K -> CalibResult。"""
+def calibrate_from_points(points: list[tuple[float, float]],
+                          force_zero: bool = False) -> Any:
+    """由标定表 [(ma_over_mr, ia_over_ir), ...] 计算 K -> CalibResult。
+
+    force_zero=False（默认，带截距 OLS）：采用 polyfit 斜率；
+    force_zero=True：采用强制过原点的最小二乘斜率 K0。
+    两种口径下 intercept / r2 均按带截距 OLS 回填，供上层诊断与告警。
+    """
     point_cls = _core("method_a.CalibPoint")
     calibrate = _core("method_a.calibrate_k")
-    return calibrate([point_cls(m, i) for m, i in points])
+    kwargs = {"force_zero": bool(force_zero)} if supports_param(
+        calibrate, "force_zero") else {}
+    return calibrate([point_cls(m, i) for m, i in points], **kwargs)
 
 
 def combine_duplicates(r1: Any, r2: Any, limit: float | None = None) -> dict:
@@ -109,30 +168,136 @@ def combine_duplicates(r1: Any, r2: Any, limit: float | None = None) -> dict:
 
 
 def run_method_a(pat: Any, win_a: tuple[float, float],
-                 win_r: tuple[float, float], k: float) -> dict:
-    """A 法全流程：双窗口测峰 + 比率计算。
+                 win_r: tuple[float, float], k: float,
+                 second_pat: Any = None, *, progress_cb: ProgressCb = None,
+                 cancel_cb: Callable[[], bool] | None = None) -> dict:
+    """A 法全流程：双窗口测峰 + 比率计算（可选第二份平行谱做双平行）。
 
-    返回 ``{"ia", "ir", "measure_a", "measure_r", "result"}``，
-    ``result`` 为 RatioResult（含 wa/wr/K/ia/ir）。
+    返回 ``{"ia","ir","measure_a","measure_r","result","dup"}``，
+    ``result`` 为 RatioResult（含 wa/wr/K/ia/ir），``dup`` 为合并结果或 None。
+    """
+    _emit(progress_cb, "busy.measure", 0.05)
+    first = _measure_ratio(
+        pat, win_a, win_r,
+        sub_progress(progress_cb, 0.05, 0.25), sub_progress(progress_cb, 0.25, 0.45),
+        cancel_cb)
+    _emit(progress_cb, "busy.ratio", 0.50)
+    result = compute_ratio(first["ia"], first["ir"], k)
+    dup = None
+    if second_pat is not None:
+        second = _measure_ratio(
+            second_pat, win_a, win_r,
+            sub_progress(progress_cb, 0.50, 0.70),
+            sub_progress(progress_cb, 0.70, 0.90), cancel_cb)
+        result2 = compute_ratio(second["ia"], second["ir"], k)
+        _emit(progress_cb, "busy.ratio", 0.95)
+        dup = combine_duplicates(result, result2)
+    else:
+        result2 = None
+    _emit(progress_cb, "busy.ratio", 1.0)
+    return {
+        "ia": first["ia"],
+        "ir": first["ir"],
+        "measure_a": first["measure_a"],
+        "measure_r": first["measure_r"],
+        "result": result,
+        "result2": result2,
+        "dup": dup,
+    }
+
+
+def _measure_ratio(pat: Any, win_a: tuple[float, float], win_r: tuple[float, float],
+                   cb_a: ProgressCb, cb_r: ProgressCb,
+                   cancel_cb: Callable[[], bool] | None) -> dict:
+    """在一个窗口对上测量两相净峰强度（A 峰/ R 峰各自独立的子进度区间）。
+
+    两相分别映射到互不重叠的进度区间，保证进度条单调推进、不来回跳动；
+    被用户取消时抛 :class:`TaskCanceled`。
     """
     center_a = (win_a[0] + win_a[1]) / 2.0
     center_r = (win_r[0] + win_r[1]) / 2.0
     tol_a = max(0.05, (win_a[1] - win_a[0]) / 2.0)
     tol_r = max(0.05, (win_r[1] - win_r[0]) / 2.0)
-    ma = measure_peak(pat, center_a, tol_a)
-    mr = measure_peak(pat, center_r, tol_r)
+    ma = measure_peak(pat, center_a, tol_a, progress_cb=cb_a, cancel_cb=cancel_cb)
+    mr = measure_peak(pat, center_r, tol_r, progress_cb=cb_r, cancel_cb=cancel_cb)
+    if callable(cancel_cb) and cancel_cb():
+        raise TaskCanceled(tr("msg.busy_canceled"))
     if not getattr(ma, "ok", False) or not getattr(mr, "ok", False):
-        bad = "A(锐钛型)" if not getattr(ma, "ok", False) else "R(金红石型)"
-        msg = getattr(ma if not getattr(ma, "ok", False) else mr, "message", "")
-        raise ValueError(f"{bad}: {msg}")
-    result = compute_ratio(float(ma.net_height), float(mr.net_height), k)
+        bad_ma = not getattr(ma, "ok", False)
+        bad: Any = ma if bad_ma else mr
+        name = "A(锐钛型)" if bad_ma else "R(金红石型)"
+        raise ValueError(f"{name}: {getattr(bad, 'message', '')}")
     return {
-        "ia": float(ma.net_height),
-        "ir": float(mr.net_height),
+        "ia": float(getattr(ma, "net_height", 0.0)),
+        "ir": float(getattr(mr, "net_height", 0.0)),
         "measure_a": ma,
         "measure_r": mr,
-        "result": result,
     }
+
+
+# --------------------------------------------------------------------------- #
+# K 标定向导用：批量测量标准混合样
+# --------------------------------------------------------------------------- #
+def measure_calib_rows(rows: list[dict], win_a: tuple[float, float],
+                       win_r: tuple[float, float], *,
+                       progress_cb: ProgressCb = None,
+                       cancel_cb: Callable[[], bool] | None = None) -> list[dict]:
+    """逐行读取谱图并测量 I(A)/I(R)。
+
+    rows: ``[{"file": str, "wr": float(金红石型质量分数 %)}, ...]``
+    返回逐行结果列表（顺序一致）::
+
+        {"file","wr","ratio_m","ratio_i","ia","ir","ok","message"}
+    """
+    center_a = (win_a[0] + win_a[1]) / 2.0
+    center_r = (win_r[0] + win_r[1]) / 2.0
+    tol_a = max(0.05, (win_a[1] - win_a[0]) / 2.0)
+    tol_r = max(0.05, (win_r[1] - win_r[0]) / 2.0)
+    total = len(rows)
+    out: list[dict] = []
+    for idx, spec in enumerate(rows, start=1):
+        if callable(cancel_cb) and cancel_cb():
+            raise TaskCanceled(tr("msg.busy_canceled"))
+        path = str(spec.get("file", ""))
+        wr = float(spec.get("wr", 0.0))
+        _emit(progress_cb, "busy.calib_row", (idx - 1) / max(1, total),
+              i=idx, n=total)
+        row = {"file": path, "wr": wr, "ratio_m": mass_ratio_from_wr(wr),
+               "ratio_i": None, "ia": None, "ir": None, "ok": False, "message": ""}
+        try:
+            pat = load_pattern(path)
+            ma = measure_peak(pat, center_a, tol_a)
+            mr = measure_peak(pat, center_r, tol_r)
+            ia = float(getattr(ma, "net_height", 0.0))
+            ir = float(getattr(mr, "net_height", 0.0))
+            if not getattr(ma, "ok", False) or not getattr(mr, "ok", False):
+                bad = ma if not getattr(ma, "ok", False) else mr
+                row["message"] = str(getattr(bad, "message", ""))
+            elif ir <= 0:
+                row["message"] = "ir<=0"
+            else:
+                row.update(ia=ia, ir=ir, ratio_i=ia / ir, ok=True)
+        except Exception as exc:  # noqa: BLE001 —— 单行失败不影响整批
+            row["message"] = str(exc)
+        out.append(row)
+        _emit(progress_cb, "busy.calib_row", idx / max(1, total), i=idx, n=total)
+    return out
+
+
+def mass_ratio_from_wr(wr: float) -> float | None:
+    """金红石型质量分数 w(R)% -> m(A)/m(R) = (100-wR)/wR。"""
+    wr = float(wr)
+    if wr <= 0.0 or wr >= 100.0:
+        return None
+    return (100.0 - wr) / wr
+
+
+def wr_from_mass_ratio(ratio_m: float) -> float:
+    """m(A)/m(R) -> 金红石型质量分数 w(R)% = 100/(1+m(A)/m(R))。"""
+    r = float(ratio_m)
+    if r < 0:
+        return 0.0
+    return 100.0 / (1.0 + r)
 
 
 # --------------------------------------------------------------------------- #
@@ -140,7 +305,9 @@ def run_method_a(pat: Any, win_a: tuple[float, float],
 # --------------------------------------------------------------------------- #
 def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
                  refine_eta: bool = False, n_bg: int = 3,
-                 extra_cifs: tuple[str, ...] = ()) -> dict:
+                 extra_cifs: tuple[str, ...] = (), progress_cb: ProgressCb = None,
+                 on_iter: Callable[[int, float], None] | None = None,
+                 cancel_cb: Callable[[], bool] | None = None) -> dict:
     """B 法全流程：内置两相 + 可选附加 CIF 的 Rietveld 精修。
 
     返回 ``{"result": RefineResult, "two_theta", "ycalc", "diff"}``，
@@ -152,14 +319,26 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
     refine = _core("refine.nonlinear.refine")
     builtin_cif_path = _builtin_cif_path()
 
+    _emit(progress_cb, "busy.refine_start", 0.10)
     cif_paths = [str(builtin_cif_path("anatase")), str(builtin_cif_path("rutile"))]
     cif_paths += [str(p) for p in extra_cifs]
+    if callable(cancel_cb) and cancel_cb():
+        raise TaskCanceled(tr("msg.busy_canceled"))
+    _emit(progress_cb, "busy.load", 0.25)
     phases = [parse_cif(p) for p in cif_paths]
 
     prm0 = profile_params()
     cfg = refine_config(refine_zero=refine_zero, refine_uvw=refine_uvw,
                         refine_eta=refine_eta, n_bg=int(n_bg))
-    res = refine(phases, pat, prm0, cfg)
+    kwargs: dict[str, Any] = {}
+    if progress_cb is not None and supports_param(refine, "progress_cb"):
+        kwargs["progress_cb"] = sub_progress(progress_cb, 0.30, 1.0)
+    if on_iter is not None and supports_param(refine, "on_iter"):
+        kwargs["on_iter"] = on_iter
+    if cancel_cb is not None and supports_param(refine, "cancel_cb"):
+        kwargs["cancel_cb"] = cancel_cb
+    res = refine(phases, pat, prm0, cfg, **kwargs)
+    _emit(progress_cb, "busy.refine_start", 1.0)
 
     two_theta = pat.two_theta
     ycalc = res.ycalc

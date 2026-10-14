@@ -1,8 +1,18 @@
 """A 法 / B 法参数与结果面板。
 
-面板只负责采集参数与展示结果，与 core 的交互一律经由 MainWindow 调
-``rutana.gui.services`` 完成，再回填 ``set_result`` / ``set_rfactors``。
+面板只负责采集参数与展示结果，与 core 的交互一律经由上层调
+``rutana.gui.services`` 完成，再回填 ``set_result_a`` / ``set_rfactors``。
 所有文案经 i18n，``retranslate()`` 支持运行时热切换。
+
+v1.0.0 变更：
+
+- A 法 K 分组重做：手输 K + 「K 值说明」+「K 标定向导…」两个入口，
+  K 来源（手输/标定）在界面上明示，避免用户不知道 K 是什么、该怎么设；
+- A 法结果卡：wa/wr + K + I(A)/I(R) + R² + 双平行差 + 合格判定，
+  并提供可选「参考真值」输入 → 显示相对误差（便于用真实标样验证）；
+- B 法结果卡：Rwp/Rp/χ² 且按 Rwp ≤ 10% 直接给绿/红判定。
+
+选项卡容器 :class:`rutana.gui.tabs.MethodTabs` 已拆到独立模块。
 """
 
 from __future__ import annotations
@@ -17,34 +27,37 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QSpinBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from rutana.gui.resultcard import ResultCard
 from rutana.i18n import tr
 
 #: 附加 CIF 路径存放在 QListWidgetItem 的 UserRole
 ROLE_CIF_PATH = Qt.UserRole + 1
 
+#: A 法结果卡行（顺序即显示顺序）
+A_RESULT_ROWS = (
+    "result.wa", "result.wr", "result.k", "result.ia_ir", "result.r2",
+    "result.dup", "result.verdict", "result.ref_err",
+)
 
-def _result_row() -> tuple[QLabel, QLabel]:
-    """构造「标签: 值」一行，返回 (标签, 值) 控件（文案由 retranslate 填）。"""
-    lab = QLabel()
-    val = QLabel(tr("verdict.na"))
-    val.setStyleSheet("font-weight:600;")
-    return lab, val
+#: B 法结果卡行
+B_RESULT_ROWS = ("result.rwp", "result.rp", "result.chi2", "result.fit_verdict")
+
+#: R² 告警阈值（低于此值提示线性不佳）
+R2_WARN_LIMIT = 0.995
 
 
 class APanel(QWidget):
-    """A 法（强度比值法）面板：双窗口、K 值、计算与结果卡。"""
+    """A 法（强度比值法）面板：双窗口、K 值、参考真值与结果卡。"""
 
     compute_requested = Signal()
-    k_calibrate_requested = Signal(list)  # list[tuple[float, float]]
+    k_help_requested = Signal()
+    k_wizard_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,7 +68,7 @@ class APanel(QWidget):
         # ---- 测量窗口 ----
         self.grp_windows = QGroupBox(self)
         grid = QVBoxLayout(self.grp_windows)
-        for row, phase_key in enumerate(("a.anatase", "a.rutile")):
+        for _row, phase_key in enumerate(("a.anatase", "a.rutile")):
             h = QHBoxLayout()
             lab = QLabel(self.grp_windows)
             h.addWidget(lab)
@@ -94,16 +107,36 @@ class APanel(QWidget):
         h.addWidget(self.sp_k)
         h.addStretch(1)
         kv.addLayout(h)
-        self.ed_calib = QPlainTextEdit(self.grp_k)
-        self.ed_calib.setFixedHeight(72)
-        self.ed_calib.setPlaceholderText(tr("a.k.table_hint"))
-        kv.addWidget(self.ed_calib)
-        self.btn_calib = QPushButton(self.grp_k)
-        self.btn_calib.clicked.connect(self._on_calibrate)
-        kv.addWidget(self.btn_calib)
-        self.lbl_kinfo = QLabel(tr("verdict.na"), self.grp_k)
+        kh = QHBoxLayout()
+        self.btn_k_help = QPushButton(self.grp_k)
+        self.btn_k_help.clicked.connect(self.k_help_requested.emit)
+        self.btn_k_wizard = QPushButton(self.grp_k)
+        self.btn_k_wizard.clicked.connect(self.k_wizard_requested.emit)
+        kh.addWidget(self.btn_k_help)
+        kh.addWidget(self.btn_k_wizard)
+        kv.addLayout(kh)
+        self.lbl_kinfo = QLabel(tr("a.k.source_manual"), self.grp_k)
+        self.lbl_kinfo.setWordWrap(True)
+        self.lbl_kinfo.setStyleSheet("font-size:12px; color:#64748B;")
         kv.addWidget(self.lbl_kinfo)
         root.addWidget(self.grp_k)
+
+        # ---- 参考真值（可选）----
+        self.grp_ref = QGroupBox(self)
+        rv = QVBoxLayout(self.grp_ref)
+        self.chk_ref = QCheckBox(self.grp_ref)
+        self.chk_ref.setChecked(False)
+        self.chk_ref.toggled.connect(lambda _on: self.sp_ref.setEnabled(self.chk_ref.isChecked()))
+        self.sp_ref = QDoubleSpinBox(self.grp_ref)
+        self.sp_ref.setRange(0.0, 100.0)
+        self.sp_ref.setDecimals(2)
+        self.sp_ref.setValue(50.0)
+        self.sp_ref.setEnabled(False)
+        rh = QHBoxLayout()
+        rh.addWidget(self.chk_ref)
+        rh.addWidget(self.sp_ref)
+        rv.addLayout(rh)
+        root.addWidget(self.grp_ref)
 
         # ---- 计算 ----
         self.btn_compute = QPushButton(self)
@@ -111,19 +144,8 @@ class APanel(QWidget):
         root.addWidget(self.btn_compute)
 
         # ---- 结果卡 ----
-        self.grp_result = QGroupBox(self)
-        rv = QVBoxLayout(self.grp_result)
-        self.rows: dict[str, tuple[QLabel, QLabel]] = {}
-        for key in ("result.wa", "result.wr", "result.k", "result.ia",
-                    "result.ir", "result.dup", "result.verdict"):
-            lab, val = _result_row()
-            self.rows[key] = (lab, val)
-            row = QHBoxLayout()
-            row.addWidget(lab)
-            row.addStretch(1)
-            row.addWidget(val)
-            rv.addLayout(row)
-        root.addWidget(self.grp_result)
+        self.card_a = ResultCard(A_RESULT_ROWS, self, title_key="a.result_group")
+        root.addWidget(self.card_a)
         root.addStretch(1)
         self.retranslate()
 
@@ -141,26 +163,62 @@ class APanel(QWidget):
         """标定过则用标定 K，否则用手输 K。"""
         return self._k_override if self._k_override is not None else self.sp_k.value()
 
-    def set_k(self, k: float, r2: float) -> None:
+    def current_r2(self) -> float | None:
+        """标定 R²（未标定时为 None）。"""
+        return self._r2
+
+    def reference_value(self) -> float | None:
+        """参考真值 w(锐钛型)%；未启用返回 None。"""
+        if not self.chk_ref.isChecked():
+            return None
+        return float(self.sp_ref.value())
+
+    def set_k(self, k: float, r2: float | None = None) -> None:
         """写入标定结果并锁定 K。"""
         self._k_override = float(k)
-        self._r2 = float(r2)
-        self.lbl_kinfo.setText(tr("a.k.result", k=k, r2=r2))
+        self._r2 = float(r2) if r2 is not None else None
+        self._refresh_k_info()
 
-    def set_result_a(self, result, dup: dict | None = None) -> None:
-        """回填 A 法结果（result: RatioResult；dup: combine_duplicates 返回值）。"""
-        self.rows["result.wa"][1].setText(f"{result.wa:.2f}")
-        self.rows["result.wr"][1].setText(f"{result.wr:.2f}")
-        self.rows["result.k"][1].setText(f"{result.K:.4f}")
-        self.rows["result.ia"][1].setText(f"{result.ia:.1f}")
-        self.rows["result.ir"][1].setText(f"{result.ir:.1f}")
-        if dup is None:
-            self.rows["result.dup"][1].setText(tr("verdict.na"))
-            self.rows["result.verdict"][1].setText(tr("verdict.na"))
+    def clear_k(self) -> None:
+        """回到手输 K（切换样品/清空标定时可调用）。"""
+        self._k_override = None
+        self._r2 = None
+        self._refresh_k_info()
+
+    def set_result_a(self, result, dup: dict | None = None,
+                     r2: float | None = None, ref: float | None = None) -> None:
+        """回填 A 法结果。
+
+        result: RatioResult；dup: combine_duplicates 返回值；
+        r2: 标定 R²（展示用）；ref: 参考真值 w(A)%（启用时显示相对误差）。
+        """
+        wa = float(getattr(result, "wa", 0.0))
+        self.card_a.set_value("result.wa", f"{wa:.2f}")
+        self.card_a.set_value("result.wr", f"{float(getattr(result, 'wr', 0.0)):.2f}")
+        self.card_a.set_value("result.k", f"{float(getattr(result, 'K', 0.0)):.4f}")
+        ia = float(getattr(result, "ia", 0.0))
+        ir = float(getattr(result, "ir", 0.0))
+        self.card_a.set_value("result.ia_ir",
+                              f"{ia / ir:.4f}" if ir > 0 else tr("verdict.na"))
+        if r2 is None:
+            self.card_a.set_value("result.r2", tr("verdict.na"))
         else:
-            self.rows["result.dup"][1].setText(f"{dup['abs_diff']:.2f}")
-            key = "verdict.pass" if dup["within_limit"] else "verdict.fail"
-            self.rows["result.verdict"][1].setText(tr(key))
+            self.card_a.set_value("result.r2", f"{r2:.4f}",
+                                  "warn" if r2 < R2_WARN_LIMIT else "good")
+        if dup is None:
+            self.card_a.set_value("result.dup", tr("verdict.na"))
+            self.card_a.set_value("result.verdict", tr("verdict.na"))
+        else:
+            self.card_a.set_value("result.dup", f"{dup['abs_diff']:.2f}")
+            ok = bool(dup["within_limit"])
+            self.card_a.set_value("result.verdict",
+                                  tr("verdict.pass" if ok else "verdict.fail"),
+                                  "good" if ok else "bad")
+        self._set_ref_error(wa, ref)
+
+    def clear_result_a(self) -> None:
+        """结果卡复位（换谱/清空时用）。"""
+        self.card_a.clear()
 
     # ------------------------------------------------------------------ #
     # 多语言
@@ -173,28 +231,36 @@ class APanel(QWidget):
         self.sp_r_min.setToolTip(tr("a.tmin"))
         self.grp_k.setTitle(tr("a.k_group"))
         self.lbl_k.setText(tr("a.k.label"))
-        self.ed_calib.setPlaceholderText(tr("a.k.table_hint"))
-        self.btn_calib.setText(tr("a.k.calibrate"))
+        self.btn_k_help.setText(tr("a.k_help"))
+        self.btn_k_wizard.setText(tr("a.k_wizard"))
+        self.grp_ref.setTitle(tr("result.ref_label"))
+        self.chk_ref.setText(tr("a.ref_enable"))
         self.btn_compute.setText(tr("a.compute"))
-        self.grp_result.setTitle(tr("a.result_group"))
-        for key, (lab, _val) in self.rows.items():
-            lab.setText(tr(key) + "：")
+        self.card_a.retranslate()
+        self._refresh_k_info()
 
     # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #
-    def _on_calibrate(self) -> None:
-        """解析标定表文本并发出标定请求（不足 3 行也交由上层给出提示）。"""
-        points: list[tuple[float, float]] = []
-        for line in self.ed_calib.toPlainText().splitlines():
-            parts = [p for p in line.replace("，", ",").split(",") if p.strip()]
-            if len(parts) < 2:
-                continue
-            try:
-                points.append((float(parts[0]), float(parts[1])))
-            except ValueError:
-                continue
-        self.k_calibrate_requested.emit(points)
+    def _refresh_k_info(self) -> None:
+        """刷新 K 来源说明行（手输 / 标定 + R²）。"""
+        if self._k_override is None:
+            self.lbl_kinfo.setText(tr("a.k.source_manual"))
+            return
+        if self._r2 is None:
+            self.lbl_kinfo.setText(f"{tr('a.k.source_calib')}：K = {self._k_override:.4f}")
+        else:
+            self.lbl_kinfo.setText(
+                f"{tr('a.k.source_calib')}：{tr('a.k.result', k=self._k_override, r2=self._r2)}")
+
+    def _set_ref_error(self, wa: float, ref: float | None) -> None:
+        """按参考真值计算并显示相对误差（%）。"""
+        if ref is None or ref <= 0:
+            self.card_a.set_value("result.ref_err", tr("verdict.na"))
+            return
+        rel = (wa - float(ref)) / float(ref) * 100.0
+        self.card_a.set_value("result.ref_err", f"{rel:+.2f}",
+                              "good" if abs(rel) <= 2.0 else "warn")
 
 
 class BPanel(QWidget):
@@ -246,24 +312,14 @@ class BPanel(QWidget):
         self.btn_run = QPushButton(self)
         self.btn_run.clicked.connect(self.run_requested.emit)
         root.addWidget(self.btn_run)
-        self.progress = QProgressBar(self)
-        self.progress.setRange(0, 0)  # 忙碌指示
-        self.progress.hide()
-        root.addWidget(self.progress)
+        self.lbl_busy = QLabel(tr("status.computing"), self)
+        self.lbl_busy.setStyleSheet("font-size:12px; color:#0284C7;")
+        self.lbl_busy.hide()
+        root.addWidget(self.lbl_busy)
 
         # ---- R 因子结果卡 ----
-        self.grp_rf = QGroupBox(self)
-        fv = QVBoxLayout(self.grp_rf)
-        self.rows: dict[str, tuple[QLabel, QLabel]] = {}
-        for key in ("result.rwp", "result.rp", "result.chi2"):
-            lab, val = _result_row()
-            self.rows[key] = (lab, val)
-            row = QHBoxLayout()
-            row.addWidget(lab)
-            row.addStretch(1)
-            row.addWidget(val)
-            fv.addLayout(row)
-        root.addWidget(self.grp_rf)
+        self.card_b = ResultCard(B_RESULT_ROWS, self, title_key="b.rfactors")
+        root.addWidget(self.card_b)
         root.addStretch(1)
         self.retranslate()
 
@@ -286,15 +342,23 @@ class BPanel(QWidget):
         }
 
     def set_busy(self, busy: bool) -> None:
-        """切换忙碌状态（进度条 + 禁用运行按钮）。"""
-        self.progress.setVisible(busy)
+        """切换忙碌状态（忙窗为主，面板此处仅同步禁用运行按钮与提示行）。"""
+        self.lbl_busy.setVisible(busy)
         self.btn_run.setEnabled(not busy)
 
     def set_rfactors(self, rwp: float, rp: float, chi2: float) -> None:
-        """回填 R 因子。"""
-        self.rows["result.rwp"][1].setText(f"{rwp:.2f}")
-        self.rows["result.rp"][1].setText(f"{rp:.2f}")
-        self.rows["result.chi2"][1].setText(f"{chi2:.3f}")
+        """回填 R 因子；Rwp ≤ 10% 判绿（拟合良好），否则判红。"""
+        self.card_b.set_value("result.rwp", f"{rwp:.2f}",
+                              "good" if rwp <= 10.0 else "bad")
+        self.card_b.set_value("result.rp", f"{rp:.2f}")
+        self.card_b.set_value("result.chi2", f"{chi2:.3f}")
+        key = "verdict.fit_good" if rwp <= 10.0 else "verdict.fit_bad"
+        self.card_b.set_value("result.fit_verdict", tr(key),
+                              "good" if rwp <= 10.0 else "bad")
+
+    def clear_rfactors(self) -> None:
+        """R 因子卡复位。"""
+        self.card_b.clear()
 
     # ------------------------------------------------------------------ #
     # 多语言
@@ -311,9 +375,8 @@ class BPanel(QWidget):
         self.chk_eta.setText(tr("b.refine.eta"))
         self.lbl_nbg.setText(tr("b.n_bg") + "：")
         self.btn_run.setText(tr("b.run"))
-        self.grp_rf.setTitle(tr("b.rfactors"))
-        for key, (lab, _val) in self.rows.items():
-            lab.setText(tr(key) + "：")
+        self.lbl_busy.setText(tr("status.computing"))
+        self.card_b.retranslate()
 
     # ------------------------------------------------------------------ #
     # 内部
@@ -326,21 +389,3 @@ class BPanel(QWidget):
             item = QListWidgetItem(p)
             item.setData(ROLE_CIF_PATH, p)
             self.lst_phases.addItem(item)
-
-
-class MethodTabs(QTabWidget):
-    """右侧参数/结果选项卡容器（A 法 / B 法）。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.a_panel = APanel(self)
-        self.b_panel = BPanel(self)
-        self.addTab(self.a_panel, "")
-        self.addTab(self.b_panel, "")
-        self.retranslate()
-
-    def retranslate(self) -> None:
-        self.setTabText(0, tr("tab.a"))
-        self.setTabText(1, tr("tab.b"))
-        self.a_panel.retranslate()
-        self.b_panel.retranslate()

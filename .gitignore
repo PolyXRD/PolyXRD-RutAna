@@ -7,3 +7,8 @@ dist/
 installer_output/
 tests/out/
 *.egg-info/
+
+# 会话工作记忆与生成报告不入库
+.workbuddy/
+bench_report*.md
+_b_diag.py

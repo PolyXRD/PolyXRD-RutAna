@@ -29,9 +29,10 @@ from PySide6.QtWidgets import (
 from rutana.gui import services
 from rutana.gui.canvas import PatternCanvas
 from rutana.gui.dialogs import AboutDialog, CopyrightDialog
-from rutana.gui.exports import ExportMixin, a_rows
-from rutana.gui.panels import MethodTabs
+from rutana.gui.exports import ExportMixin
 from rutana.gui.resources import resource_path
+from rutana.gui.tabs import MethodTabs
+from rutana.gui.tasks import TaskMixin
 from rutana.i18n import (
     available_languages,
     current_language,
@@ -45,8 +46,12 @@ from rutana.version import APP_NAME, __version__
 LANG_ORDER = ("zh_CN", "en_US", "ja_JP")
 
 
-class MainWindow(ExportMixin, QMainWindow):
-    """主窗口：导入 → 计算 → 出结果三击可达。"""
+class MainWindow(TaskMixin, ExportMixin, QMainWindow):
+    """主窗口：导入 → 计算 → 出结果三击可达。
+
+    计算过程全部在 :mod:`rutana.gui.tasks` 的后台线程中完成，
+    前台由 BusyDialog 显示「正在计算/正在拟合」与已用时，界面不冻结。
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -142,9 +147,10 @@ class MainWindow(ExportMixin, QMainWindow):
 
         # 右：A/B 法选项卡
         self.tabs = MethodTabs(self)
-        self.tabs.a_panel.compute_requested.connect(self._on_a_compute)
-        self.tabs.a_panel.k_calibrate_requested.connect(self._on_k_calibrate)
-        self.tabs.b_panel.run_requested.connect(self._on_b_run)
+        self.tabs.a_panel.compute_requested.connect(self.run_task_a)
+        self.tabs.a_panel.k_help_requested.connect(self.open_k_help)
+        self.tabs.a_panel.k_wizard_requested.connect(self.open_k_wizard)
+        self.tabs.b_panel.run_requested.connect(self.run_task_b)
         splitter.addWidget(self.tabs)
 
         splitter.setStretchFactor(0, 0)
@@ -255,89 +261,6 @@ class MainWindow(ExportMixin, QMainWindow):
         return self._patterns[path] if path else None
 
     # ------------------------------------------------------------------ #
-    # 槽：A 法
-    # ------------------------------------------------------------------ #
-    def _on_k_calibrate(self, points: list) -> None:
-        """由标定表计算 K。"""
-        if len(points) < 3:
-            self._msg("msg.k_points")
-            return
-        try:
-            res = services.calibrate_from_points(points)
-        except services.CoreUnavailableError as exc:
-            self._msg("msg.core_unavailable", str(exc), error=True)
-            return
-        except Exception as exc:  # noqa: BLE001
-            self._msg("msg.k_calib_fail", str(exc), error=True)
-            return
-        self.tabs.a_panel.set_k(res.K, res.r2)
-
-    def _on_a_compute(self) -> None:
-        """A 法：当前谱计算；若已导入两份谱则做双平行合并。"""
-        pat = self._current_pattern()
-        if pat is None:
-            self._msg("msg.need_pattern")
-            return
-        params = self.tabs.a_panel.params()
-        k = self.tabs.a_panel.current_k()
-        try:
-            data = services.run_method_a(pat, params["win_a"], params["win_r"], k)
-            dup = None
-            pats = list(self._patterns.values())
-            if len(pats) >= 2:
-                other = pats[1] if pats[0] is pat else pats[0]
-                data2 = services.run_method_a(other, params["win_a"], params["win_r"], k)
-                dup = services.combine_duplicates(data["result"], data2["result"])
-            self.tabs.a_panel.set_result_a(data["result"], dup)
-            self._last_a = {
-                "sample": Path(self._current_path() or "").stem,
-                "file": self._current_path() or "",
-                "rows": a_rows(data["result"], dup),
-                "verdict": (tr("verdict.pass") if dup and dup["within_limit"]
-                            else tr("verdict.fail") if dup else tr("verdict.na")),
-            }
-        except services.CoreUnavailableError as exc:
-            self._msg("msg.core_unavailable", str(exc), error=True)
-        except Exception as exc:  # noqa: BLE001
-            self._msg("msg.compute_fail", str(exc), error=True)
-
-    # ------------------------------------------------------------------ #
-    # 槽：B 法
-    # ------------------------------------------------------------------ #
-    def _on_b_run(self) -> None:
-        """B 法：Rietveld 精修，完成后画布叠加计算谱与差值线。"""
-        pat = self._current_pattern()
-        if pat is None:
-            self._msg("msg.need_pattern")
-            return
-        params = self.tabs.b_panel.params()
-        self.tabs.b_panel.set_busy(True)
-        try:
-            data = services.run_method_b(pat, **params)
-            rf = data["result"].rf
-            self.tabs.b_panel.set_rfactors(rf.rwp, rf.rp, rf.chi2)
-            self.canvas.show_fit(np.asarray(data["two_theta"]),
-                                 np.asarray(pat.intensity),
-                                 np.asarray(data["ycalc"]),
-                                 np.asarray(data["diff"]))
-            self._last_b = {
-                "sample": Path(self._current_path() or "").stem,
-                "file": self._current_path() or "",
-                "rows": [
-                    (tr("result.rwp"), f"{rf.rwp:.2f}"),
-                    (tr("result.rp"), f"{rf.rp:.2f}"),
-                    (tr("result.chi2"), f"{rf.chi2:.3f}"),
-                ],
-                "verdict": tr("verdict.pass") if rf.rwp <= 10.0 else tr("verdict.fail"),
-            }
-        except services.CoreUnavailableError as exc:
-            self._msg("msg.core_unavailable", str(exc), error=True)
-        except Exception as exc:  # noqa: BLE001
-            self._msg("msg.refine_fail", str(exc), error=True)
-        finally:
-            self.tabs.b_panel.set_busy(False)
-
-    # ------------------------------------------------------------------ #
     # 槽：语言与帮助
     # ------------------------------------------------------------------ #
     def _on_language(self, code: str) -> None:
@@ -357,6 +280,10 @@ class MainWindow(ExportMixin, QMainWindow):
     def _msg(self, key: str, detail: str | None = None, error: bool = False) -> None:
         """统一弹窗：error=True 用错误样式，detail 填充 {detail} 占位。"""
         text = tr(key, detail=detail) if detail is not None else tr(key)
+        self._msg_box(text, error=error)
+
+    def _msg_box(self, text: str, *, error: bool = False) -> None:
+        """显示一段已经本地化好的文本（供 TaskMixin 等复用）。"""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Critical if error else QMessageBox.Information)
         box.setWindowTitle(tr("msg.error") if error else tr("msg.info"))

@@ -1,6 +1,6 @@
 # 内置 CIF 来源与选取记录（T3.1 + T4.6 调试日志）
 
-> 维护: B 法引擎组（寇豆码）。生成命令: `D:/Project/XRD/python310/python.exe tools/select_cif.py`
+> 维护: B 法引擎开发组。生成命令: `D:/Project/XRD/python310/python.exe tools/select_cif.py`
 > 打分明细 JSON: `tests/out/cif_score.json`；报告: `tests/out/cif_score_report.md`
 
 ## 1. 数据来源
