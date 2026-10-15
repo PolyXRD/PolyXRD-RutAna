@@ -79,6 +79,15 @@ def core_symbol(key: str) -> Any:
         if key == "refine.nonlinear.refine":
             from rutana.core.refine.nonlinear import refine
             return refine
+        if key == "refine.qpa.qpa_inputs_from_cif":
+            from rutana.core.refine.qpa import qpa_inputs_from_cif
+            return qpa_inputs_from_cif
+        if key == "refine.qpa.qpa_weights":
+            from rutana.core.refine.qpa import qpa_weights
+            return qpa_weights
+        if key == "refine.qpa.to_ratio":
+            from rutana.core.refine.qpa import to_ratio
+            return to_ratio
     except Exception as exc:  # ImportError / AttributeError / core 内部依赖缺失
         raise CoreUnavailableError(tr("msg.core_unavailable", detail=exc)) from exc
     raise KeyError(f"未注册的 core 符号: {key}")

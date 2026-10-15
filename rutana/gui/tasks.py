@@ -65,7 +65,8 @@ class TaskMixin:
         return self._run_core_task(
             services.run_method_a,
             kwargs={"pat": pat, "win_a": params["win_a"], "win_r": params["win_r"],
-                    "k": self.tabs.a_panel.current_k(), "second_pat": second},
+                    "k": self.tabs.a_panel.current_k(), "second_pat": second,
+                    "quantity": self.tabs.a_panel.current_quantity()},
             title=tr("busy.title"),
             cancellable=services.supports_cancel("a"),
             degraded=not services.supports_progress("a"),
@@ -119,6 +120,9 @@ class TaskMixin:
         """B 法结果回填面板、画布与导出汇总。"""
         rf = data["result"].rf
         self.tabs.b_panel.set_rfactors(rf.rwp, rf.rp, rf.chi2)
+        wa, wr = data.get("wa"), data.get("wr")
+        self.tabs.b_panel.set_quantities(
+            None if wa is None else float(wa), None if wr is None else float(wr))
         self.canvas.show_fit(np.asarray(data["two_theta"]),
                              np.asarray(self._current_pattern().intensity),
                              np.asarray(data["ycalc"]),
@@ -127,6 +131,10 @@ class TaskMixin:
             "sample": Path(self._current_path() or "").stem,
             "file": self._current_path() or "",
             "rows": [
+                (tr("result.b_wa"),
+                 tr("verdict.na") if wa is None else f"{float(wa):.2f}"),
+                (tr("result.b_wr"),
+                 tr("verdict.na") if wr is None else f"{float(wr):.2f}"),
                 (tr("result.rwp"), f"{rf.rwp:.2f}"),
                 (tr("result.rp"), f"{rf.rp:.2f}"),
                 (tr("result.chi2"), f"{rf.chi2:.3f}"),
@@ -154,7 +162,9 @@ class TaskMixin:
         dlg.k_adopted.connect(self._on_k_adopted)
         dlg.exec()
 
-    def _on_k_adopted(self, k: float, _intercept: float, r2: float) -> None:
-        """向导采用此 K -> 回填面板并提示用户。"""
+    def _on_k_adopted(self, k: float, _intercept: float, r2: float,
+                      quantity: str = "area") -> None:
+        """向导采用此 K -> 回填面板（K/R²/峰强口径）并提示用户。"""
         self.tabs.a_panel.set_k(float(k), float(r2))
+        self.tabs.a_panel.set_quantity(quantity)
         self._msg_box(tr("kwizard.adopted", k=float(k), r2=float(r2)))

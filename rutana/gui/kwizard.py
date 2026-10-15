@@ -55,8 +55,8 @@ DEFAULT_WR = 50.0
 class KCalibWizardDialog(QDialog):
     """K 标定向导：录入 → 测量 → 看曲线 → 采用此 K → 可存档。"""
 
-    #: 采用此 K：(K, intercept, r2)
-    k_adopted = Signal(float, float, float)
+    #: 采用此 K：(K, intercept, r2, quantity) —— quantity 为峰强口径
+    k_adopted = Signal(float, float, float, str)
 
     def __init__(self, parent: QWidget | None = None, *,
                  win_a: tuple[float, float] = (24.5, 26.5),
@@ -103,6 +103,14 @@ class KCalibWizardDialog(QDialog):
         self.cmb_fit.currentIndexChanged.connect(lambda _i: self._refit())
         opt.addWidget(self.lbl_fit_mode)
         opt.addWidget(self.cmb_fit)
+        self.lbl_quantity = QLabel(self)
+        self.cmb_quantity = QComboBox(self)
+        self.cmb_quantity.addItem(tr("kwizard.quantity.area"), "area")
+        self.cmb_quantity.addItem(tr("kwizard.quantity.height"), "height")
+        self.cmb_quantity.setCurrentIndex(0)
+        self.cmb_quantity.currentIndexChanged.connect(self._on_quantity_changed)
+        opt.addWidget(self.lbl_quantity)
+        opt.addWidget(self.cmb_quantity)
         opt.addStretch(1)
         root.addLayout(opt)
 
@@ -168,11 +176,15 @@ class KCalibWizardDialog(QDialog):
         """最近一次拟合结果 {"K","intercept","r2","n"}；未拟合为 None。"""
         return self._fit
 
+    def current_quantity(self) -> str:
+        """当前峰强口径（``"area"`` 净峰面积 / ``"height"`` 净峰高）。"""
+        return str(self.cmb_quantity.currentData() or "area")
+
     def record(self) -> dict:
         """导出为可存档的标定记录（JSON 结构）。"""
         return build_record(win_a=self._win_a, win_r=self._win_r,
                             mode=str(self.cmb_fit.currentData()), fit=self._fit,
-                            rows=self.rows)
+                            rows=self.rows, quantity=self.current_quantity())
 
     def load_record(self, payload: dict) -> bool:
         """从 dict 载入标定记录；结构非法抛 ``ValueError``。"""
@@ -183,6 +195,11 @@ class KCalibWizardDialog(QDialog):
         if parsed["win_r"] is not None:
             self._win_r = parsed["win_r"]
         self.cmb_fit.setCurrentIndex(1 if parsed["mode"] == "origin" else 0)
+        # 恢复口径时不触发重测失效（旧记录缺 quantity 时解析层已兜底为 area）
+        self.cmb_quantity.blockSignals(True)
+        self.cmb_quantity.setCurrentIndex(
+            1 if parsed["quantity"] == "height" else 0)
+        self.cmb_quantity.blockSignals(False)
         self._refresh()
         return True
 
@@ -226,6 +243,18 @@ class KCalibWizardDialog(QDialog):
         self.rows[row]["ratio_m"] = float(ratio_m)
         self._refresh()
 
+    def _on_quantity_changed(self, _index: int) -> None:
+        """切换峰强口径：旧测量值属旧口径，全部置无效并提示重新「测量全部」。
+
+        不禁用下拉（允许先切口径再测量），但旧 ratio_i 一律作废，
+        杜绝旧口径的测量值混入新口径的拟合。
+        """
+        for row in self.rows:
+            row["ratio_i"] = None
+            row["ok"] = False
+            row["message"] = tr("kwizard.remeasure")
+        self._refresh()
+
     def _on_measure_all(self) -> None:
         """后台线程逐行测量 I(A)/I(R)，期间显示忙对话框。"""
         if not self.rows:
@@ -233,7 +262,9 @@ class KCalibWizardDialog(QDialog):
             return
         specs = [{"file": r["file"], "wr": r["wr"]} for r in self.rows]
         run_busy_task(
-            self, services.measure_calib_rows, args=(specs, self._win_a, self._win_r),
+            self, services.measure_calib_rows,
+            args=(specs, self._win_a, self._win_r),
+            kwargs={"quantity": self.current_quantity()},
             title=tr("busy.title_calib"), cancellable=services.supports_cancel("a"),
             degraded=not services.supports_progress("a"),
             on_success=self._apply_measure, on_error=self._show_error)
@@ -250,7 +281,8 @@ class KCalibWizardDialog(QDialog):
         if self._fit is None:
             QMessageBox.information(self, tr("msg.info"), tr("kwizard.no_point"))
             return
-        self.k_adopted.emit(self._fit["K"], self._fit["intercept"], self._fit["r2"])
+        self.k_adopted.emit(self._fit["K"], self._fit["intercept"],
+                            self._fit["r2"], self.current_quantity())
         self.accept()
 
     # ------------------------------------------------------------------ #
@@ -362,6 +394,9 @@ class KCalibWizardDialog(QDialog):
         self.lbl_fit_mode.setText(tr("kwizard.fit_mode") + "：")
         self.cmb_fit.setItemText(0, tr("kwizard.fit.ols"))
         self.cmb_fit.setItemText(1, tr("kwizard.fit.origin"))
+        self.lbl_quantity.setText(tr("kwizard.quantity") + "：")
+        self.cmb_quantity.setItemText(0, tr("kwizard.quantity.area"))
+        self.cmb_quantity.setItemText(1, tr("kwizard.quantity.height"))
         self.btn_load.setText(tr("kwizard.load"))
         self.btn_save.setText(tr("kwizard.save"))
         self.btn_adopt.setText(tr("kwizard.adopt"))

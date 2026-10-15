@@ -8,13 +8,15 @@
       "version": 1,
       "win_a": [24.5, 26.5], "win_r": [26.5, 28.5],   # 标定时的取峰窗口
       "mode": "ols" | "origin",                        # 拟合口径
+      "quantity": "area" | "height",                   # 峰强口径（v1.1.0，可缺省）
       "K": 1.22, "intercept": 0.001, "r2": 0.9998,     # 拟合结果（可缺省）
       "saved_at": "2026-01-01T00:00:00",
       "rows": [{"file","wr","ratio_m","ratio_i","ok","message"}, ...]
     }
 
 解析时对缺失/越界字段做保守归一化：``wr`` 夹在 (0, 100)，
-``ratio_m`` 缺失时由 ``wr`` 反算，``ok`` 缺省时按 ``ratio_i`` 是否存在推断。
+``ratio_m`` 缺失时由 ``wr`` 反算，``ok`` 缺省时按 ``ratio_i`` 是否存在推断，
+``quantity`` 缺失时按 ``"area"``（v1.1.0 前的旧记录兼容）。
 """
 
 from __future__ import annotations
@@ -39,14 +41,15 @@ def mass_ratio_from_wr(wr: float) -> float | None:
 
 def build_record(*, win_a: tuple[float, float], win_r: tuple[float, float],
                  mode: str, fit: dict[str, Any] | None,
-                 rows: list[dict]) -> dict:
-    """组装可写入 JSON 的标定记录。"""
+                 rows: list[dict], quantity: str = "area") -> dict:
+    """组装可写入 JSON 的标定记录（``quantity`` 为峰强口径）。"""
     fit = fit or {}
     return {
         "version": CALIB_JSON_VERSION,
         "win_a": [float(win_a[0]), float(win_a[1])],
         "win_r": [float(win_r[0]), float(win_r[1])],
         "mode": "origin" if mode == "origin" else "ols",
+        "quantity": "height" if quantity == "height" else "area",
         "K": fit.get("K"),
         "intercept": fit.get("intercept"),
         "r2": fit.get("r2"),
@@ -63,7 +66,7 @@ def build_record(*, win_a: tuple[float, float], win_r: tuple[float, float],
 def parse_record(payload: dict) -> dict:
     """解析标定记录；返回归一化后的字段。
 
-    返回 ``{"win_a","win_r","mode","rows"}``；``rows`` 中每项含
+    返回 ``{"win_a","win_r","mode","quantity","rows"}``；``rows`` 中每项含
     ``file / wr / ratio_m / ratio_i / ok / message``。结构非法抛 ``ValueError``。
     """
     if not isinstance(payload, dict):
@@ -94,7 +97,9 @@ def parse_record(payload: dict) -> dict:
     win_a = _pair(payload.get("win_a"))
     win_r = _pair(payload.get("win_r"))
     mode = "origin" if payload.get("mode") == "origin" else "ols"
-    return {"win_a": win_a, "win_r": win_r, "mode": mode, "rows": rows}
+    quantity = "height" if payload.get("quantity") == "height" else "area"
+    return {"win_a": win_a, "win_r": win_r, "mode": mode,
+            "quantity": quantity, "rows": rows}
 
 
 def _pair(value: Any) -> tuple[float, float] | None:

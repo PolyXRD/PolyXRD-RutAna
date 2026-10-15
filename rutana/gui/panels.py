@@ -45,8 +45,9 @@ A_RESULT_ROWS = (
     "result.dup", "result.verdict", "result.ref_err",
 )
 
-#: B 法结果卡行
-B_RESULT_ROWS = ("result.rwp", "result.rp", "result.chi2", "result.fit_verdict")
+#: B 法结果卡行（定量结果在前，R 因子在后）
+B_RESULT_ROWS = ("result.b_wa", "result.b_wr",
+                 "result.rwp", "result.rp", "result.chi2", "result.fit_verdict")
 
 #: R² 告警阈值（低于此值提示线性不佳）
 R2_WARN_LIMIT = 0.995
@@ -63,6 +64,8 @@ class APanel(QWidget):
         super().__init__(parent)
         self._k_override: float | None = None
         self._r2: float | None = None
+        #: 峰强口径（"area" 净峰面积 / "height" 净峰高）；由 K 向导采用时同步
+        self._quantity: str = "area"
         root = QVBoxLayout(self)
 
         # ---- 测量窗口 ----
@@ -167,8 +170,16 @@ class APanel(QWidget):
         """标定 R²（未标定时为 None）。"""
         return self._r2
 
+    def current_quantity(self) -> str:
+        """当前峰强口径（``"area"`` 净峰面积 / ``"height"`` 净峰高）。"""
+        return self._quantity
+
+    def set_quantity(self, quantity: str) -> None:
+        """写入峰强口径（K 向导「采用此 K」时一并同步）。"""
+        self._quantity = "height" if quantity == "height" else "area"
+
     def reference_value(self) -> float | None:
-        """参考真值 w(锐钛型)%；未启用返回 None。"""
+        """参考真值 w(金红石型)%；未启用返回 None。"""
         if not self.chk_ref.isChecked():
             return None
         return float(self.sp_ref.value())
@@ -190,11 +201,12 @@ class APanel(QWidget):
         """回填 A 法结果。
 
         result: RatioResult；dup: combine_duplicates 返回值；
-        r2: 标定 R²（展示用）；ref: 参考真值 w(A)%（启用时显示相对误差）。
+        r2: 标定 R²（展示用）；ref: 参考真值 w(R)%（启用时显示相对误差）。
         """
         wa = float(getattr(result, "wa", 0.0))
+        wr = float(getattr(result, "wr", 0.0))
         self.card_a.set_value("result.wa", f"{wa:.2f}")
-        self.card_a.set_value("result.wr", f"{float(getattr(result, 'wr', 0.0)):.2f}")
+        self.card_a.set_value("result.wr", f"{wr:.2f}")
         self.card_a.set_value("result.k", f"{float(getattr(result, 'K', 0.0)):.4f}")
         ia = float(getattr(result, "ia", 0.0))
         ir = float(getattr(result, "ir", 0.0))
@@ -214,7 +226,7 @@ class APanel(QWidget):
             self.card_a.set_value("result.verdict",
                                   tr("verdict.pass" if ok else "verdict.fail"),
                                   "good" if ok else "bad")
-        self._set_ref_error(wa, ref)
+        self._set_ref_error(wr, ref)
 
     def clear_result_a(self) -> None:
         """结果卡复位（换谱/清空时用）。"""
@@ -253,12 +265,12 @@ class APanel(QWidget):
             self.lbl_kinfo.setText(
                 f"{tr('a.k.source_calib')}：{tr('a.k.result', k=self._k_override, r2=self._r2)}")
 
-    def _set_ref_error(self, wa: float, ref: float | None) -> None:
-        """按参考真值计算并显示相对误差（%）。"""
+    def _set_ref_error(self, wr: float, ref: float | None) -> None:
+        """按参考真值（w(金红石型) wt%）计算并显示相对误差（%）。"""
         if ref is None or ref <= 0:
             self.card_a.set_value("result.ref_err", tr("verdict.na"))
             return
-        rel = (wa - float(ref)) / float(ref) * 100.0
+        rel = (wr - float(ref)) / float(ref) * 100.0
         self.card_a.set_value("result.ref_err", f"{rel:+.2f}",
                               "good" if abs(rel) <= 2.0 else "warn")
 
@@ -347,6 +359,13 @@ class BPanel(QWidget):
         """切换忙碌状态（忙窗为主，面板此处仅同步禁用运行按钮与提示行）。"""
         self.lbl_busy.setVisible(busy)
         self.btn_run.setEnabled(not busy)
+
+    def set_quantities(self, wa: float | None, wr: float | None) -> None:
+        """回填内置两相质量分数（定量失败时显示「—」）。"""
+        self.card_b.set_value("result.b_wa",
+                              f"{wa:.2f}" if wa is not None else tr("verdict.na"))
+        self.card_b.set_value("result.b_wr",
+                              f"{wr:.2f}" if wr is not None else tr("verdict.na"))
 
     def set_rfactors(self, rwp: float, rp: float, chi2: float) -> None:
         """回填 R 因子；Rwp ≤ 10% 判绿（拟合良好），否则判红。"""

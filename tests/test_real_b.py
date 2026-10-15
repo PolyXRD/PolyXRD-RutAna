@@ -55,3 +55,19 @@ def test_realdata_b_sample(_structs, rel, truth):
     assert res.rf.rwp <= 10.0, f"{rel}: Rwp={res.rf.rwp:.2f}%"
     # 定量回收（v1.0.0 实证最差 +2.62%，判据 ≤3%）
     assert abs(err_rel) <= 3.0, f"{rel}: wr={wr:.2f}% ({err_rel:+.2f}%rel)"
+
+
+def test_run_method_b_returns_two_phase_quantities():
+    """v1.1.0：GUI services.run_method_b 应返回内置两相定量 wa/wr。
+
+    18% pd 全谱真跑一次，对照冻结基线 tests/golden/method_b_realdata.json
+    （wr = 18.106）；容差 ±0.5pp 覆盖精修的微小数值抖动。
+    """
+    from rutana.gui import services
+
+    pat = load_any(REAL / "pd/18%实测谱.txt")
+    out = services.run_method_b(pat)
+    wa, wr = out["wa"], out["wr"]
+    assert wa is not None and wr is not None, "内置两相定量不应降级为 None"
+    assert wr == pytest.approx(18.106, abs=0.5)
+    assert wa + wr == pytest.approx(100.0, abs=0.01), "两相应归一到 100%"

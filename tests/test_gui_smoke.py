@@ -138,12 +138,15 @@ def test_calibrecord_parse_normalizes(qapp):
     built = build_record(win_a=(24.5, 26.5), win_r=(26.5, 28.5), mode="origin",
                          fit={"K": 1.2, "intercept": 0.01, "r2": 0.999},
                          rows=[{"file": "a.xy", "wr": 50.0, "ratio_m": 1.0,
-                                "ratio_i": 1.22, "ok": True, "message": ""}])
+                                "ratio_i": 1.22, "ok": True, "message": ""}],
+                         quantity="height")
     assert built["version"] == 1 and built["mode"] == "origin"
+    assert built["quantity"] == "height", "显式传入的口径应写入记录"
 
     parsed = parse_record({"rows": [{"file": "a.xy", "wr": 150.0, "ratio_i": 2.0},
                                     {"file": ""}]})
     assert parsed["mode"] == "ols"
+    assert parsed["quantity"] == "area", "旧记录缺 quantity 时兜底为 area"
     assert len(parsed["rows"]) == 1, "缺 file 的行应被跳过"
     row = parsed["rows"][0]
     assert row["wr"] == 99.99, "越界 wr 应被夹紧"
@@ -254,9 +257,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_100():
-    """版本号已推进到 1.0.0（UI 版本号与 EXE 名同源）。"""
-    assert __version__ == "1.0.0"
+def test_version_is_110():
+    """版本号已推进到 1.1.0（UI 版本号与 EXE 名同源）。"""
+    assert __version__ == "1.1.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -481,6 +484,8 @@ def test_run_task_b_updates_rfactors(qapp, stub_core, no_modal_exec):
                 "two_theta": tt,
                 "ycalc": ycalc,
                 "diff": np.asarray(pat.intensity) - ycalc,
+                "wa": 48.0,
+                "wr": 52.0,
             }
 
         services.run_method_b.side_effect = fake_run
@@ -490,15 +495,19 @@ def test_run_task_b_updates_rfactors(qapp, stub_core, no_modal_exec):
         assert _pump_until(
             lambda: w.tabs.b_panel.card_b.value("result.rwp") == "8.42")
         card = w.tabs.b_panel.card_b
+        assert card.value("result.b_wa") == "48.00", "B 法应回填锐钛定量结果"
+        assert card.value("result.b_wr") == "52.00", "B 法应回填金红石定量结果"
         assert card.value("result.rwp") == "8.42"
         assert card.value("result.rp") == "6.10"
         assert card.value("result.chi2") == "1.234"
         assert card.value("result.fit_verdict") == tr("verdict.fit_good")
         assert w.tabs.b_panel.btn_run.isEnabled(), "跑完应恢复可用"
         assert w._last_b is not None and w._last_b["verdict"] == tr("verdict.fit_good")
+        assert w._last_b["rows"][0] == (tr("result.b_wa"), "48.00")
+        assert w._last_b["rows"][1] == (tr("result.b_wr"), "52.00")
         assert seen and "progress_cb" in seen[0], "应向 core 注入进度回调"
 
-        # Rwp > 10% -> 红色「拟合不佳」
+        # Rwp > 10% -> 红色「拟合不佳」；无定量结果时显示「—」
         def fake_bad(pat, **kwargs):
             tt = np.asarray(pat.two_theta)
             ycalc = np.asarray(pat.intensity) * 0.80
@@ -515,6 +524,8 @@ def test_run_task_b_updates_rfactors(qapp, stub_core, no_modal_exec):
             lambda: w.tabs.b_panel.card_b.value("result.fit_verdict")
             == tr("verdict.fit_bad"))
         assert w.tabs.b_panel.card_b.value("result.fit_verdict") == tr("verdict.fit_bad")
+        assert w.tabs.b_panel.card_b.value("result.b_wa") == tr("verdict.na"), \
+            "定量缺失时应显示「—」"
     finally:
         services.run_method_b.side_effect = None
         w.close()
@@ -623,6 +634,7 @@ def test_kwizard_record_roundtrip(qapp, stub_core, tmp_path):
         payload = dlg.record()
         assert payload["version"] == 1
         assert payload["mode"] == "ols"
+        assert payload["quantity"] == "area", "默认口径应写入标定记录"
         assert len(payload["rows"]) == 3
         target = tmp_path / "k.json"
         target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -691,13 +703,18 @@ def test_kwizard_adopt_updates_panel(qapp, stub_core, no_modal_exec):
             K=1.2200, intercept=0.003, r2=0.9997, n_points=3)
         dlg = _wizard_with_rows(stub_core)
         got: list[tuple] = []
-        dlg.k_adopted.connect(lambda k, b, r2: got.append((k, b, r2)))
+        dlg.k_adopted.connect(lambda k, b, r2, q: got.append((k, b, r2, q)))
         dlg.btn_adopt.click()
         assert got and got[0][0] == 1.2200 and got[0][2] == 0.9997
+        assert got[0][3] == "area", "采用时应携带当前峰强口径"
 
         w._on_k_adopted(1.2200, 0.003, 0.9997)
         assert abs(w.tabs.a_panel.current_k() - 1.2200) < 1e-9
         assert abs((w.tabs.a_panel.current_r2() or 0) - 0.9997) < 1e-9
+        assert w.tabs.a_panel.current_quantity() == "area", "缺省时口径应为 area"
+        w._on_k_adopted(1.2200, 0.003, 0.9997, "height")
+        assert w.tabs.a_panel.current_quantity() == "height", \
+            "向导口径应一并回填主界面"
         assert tr("a.k.source_calib") in w.tabs.a_panel.lbl_kinfo.text()
         assert tr("a.k.result", k=1.22, r2=0.9997) in w.tabs.a_panel.lbl_kinfo.text()
         dlg.close()
@@ -706,12 +723,12 @@ def test_kwizard_adopt_updates_panel(qapp, stub_core, no_modal_exec):
 
 
 def test_apanel_reference_truth_relative_error(qapp, stub_core):
-    """启用参考真值后结果卡显示相对误差（%），未启用显示「—」。"""
+    """参考真值按金红石 wt% 比较：结果卡显示相对误差（%），未启用显示「—」。"""
     set_language("zh_CN")
     w = MainWindow()
     try:
         panel = w.tabs.a_panel
-        result = SimpleNamespace(wa=51.0, wr=49.0, K=1.22, ia=1200.0, ir=1000.0)
+        result = SimpleNamespace(wa=49.0, wr=51.0, K=1.22, ia=1200.0, ir=1000.0)
         assert panel.reference_value() is None
         panel.set_result_a(result, None, None, None)
         assert panel.card_a.value("result.ref_err") == tr("verdict.na")
@@ -719,6 +736,130 @@ def test_apanel_reference_truth_relative_error(qapp, stub_core):
         panel.sp_ref.setValue(50.0)
         assert panel.reference_value() == 50.0
         panel.set_result_a(result, None, None, 50.0)
-        assert panel.card_a.value("result.ref_err") == "+2.00"
+        assert panel.card_a.value("result.ref_err") == "+2.00", \
+            "相对误差应按金红石 wt% 计算：(51-50)/50"
     finally:
         w.close()
+
+
+# --------------------------------------------------------------------------- #
+# v1.1.0：峰强口径（area/height）与 B 法双相定量
+# --------------------------------------------------------------------------- #
+def _fake_measure_by_window(pat, expected, tol, **_kwargs):
+    """测峰桩：A 峰位返回 (净高 100, 面积 6000)，R 峰位返回 (净高 80, 面积 4000)。"""
+    if expected < 26.0:
+        return SimpleNamespace(ok=True, net_height=100.0, net_area=6000.0,
+                               message="")
+    return SimpleNamespace(ok=True, net_height=80.0, net_area=4000.0, message="")
+
+
+def test_measure_calib_rows_quantity(monkeypatch):
+    """标定批量测量按口径取值：height 取净峰高、area 取净峰面积（默认）。"""
+    monkeypatch.setattr(services, "load_pattern", lambda _path: object())
+    monkeypatch.setattr(services, "measure_peak", _fake_measure_by_window)
+    rows = [{"file": "D:/std/a.xy", "wr": 50.0}]
+    by_height = services.measure_calib_rows(
+        rows, (24.5, 26.5), (26.5, 28.5), quantity="height")
+    by_area = services.measure_calib_rows(
+        rows, (24.5, 26.5), (26.5, 28.5))
+    assert by_height[0]["ok"] and by_area[0]["ok"]
+    assert by_height[0]["ratio_i"] == pytest.approx(100.0 / 80.0)
+    assert by_area[0]["ratio_i"] == pytest.approx(6000.0 / 4000.0), \
+        "默认口径应为净峰面积（v1.0.0 调优结论）"
+
+
+def test_run_method_a_quantity(monkeypatch):
+    """A 法全流程按口径取峰强；不传 quantity 时默认净峰面积。"""
+    monkeypatch.setattr(services, "measure_peak", _fake_measure_by_window)
+    pat = _fake_pattern()
+    out_h = services.run_method_a(pat, (24.5, 26.5), (26.5, 28.5), k=1.0,
+                                  quantity="height")
+    assert out_h["ia"] == pytest.approx(100.0)
+    assert out_h["ir"] == pytest.approx(80.0)
+    out_a = services.run_method_a(pat, (24.5, 26.5), (26.5, 28.5), k=1.0)
+    assert out_a["ia"] == pytest.approx(6000.0)
+    assert out_a["ir"] == pytest.approx(4000.0)
+
+
+def test_kwizard_quantity_switch_invalidates_measurements(qapp, stub_core):
+    """切换峰强口径后旧测量值全部作废，须重新「测量全部」才能拟合。"""
+    set_language("zh_CN")
+    services.calibrate_from_points.return_value = SimpleNamespace(
+        K=1.2200, intercept=0.0030, r2=0.9997, n_points=3)
+    dlg = _wizard_with_rows(stub_core)
+    try:
+        assert dlg.current_quantity() == "area", "默认口径应为峰面积"
+        assert dlg.fit_result() is not None
+        dlg.cmb_quantity.setCurrentIndex(1)
+        assert dlg.current_quantity() == "height"
+        assert all(row["ratio_i"] is None and not row["ok"] for row in dlg.rows), \
+            "旧口径的测量值应全部置无效"
+        assert all(row["message"] == tr("kwizard.remeasure") for row in dlg.rows)
+        assert dlg.fit_result() is None
+        assert not dlg.btn_adopt.isEnabled(), "重测前不允许采用"
+    finally:
+        dlg.close()
+
+
+def test_kwizard_record_quantity_roundtrip(qapp, stub_core, tmp_path):
+    """标定记录携带口径往返；旧记录（无 quantity 字段）载入后兜底为 area。"""
+    services.calibrate_from_points.return_value = SimpleNamespace(
+        K=1.2200, intercept=0.0030, r2=0.9997, n_points=3)
+    dlg = KCalibWizardDialog()
+    try:
+        # 先切口径再录入已测量行（口径切换只作废旧测量值，不影响后续录入）
+        dlg.cmb_quantity.setCurrentIndex(1)
+        for path, wr, ratio_i in (("D:/std/a.xy", 50.0, 1.22),
+                                  ("D:/std/b.xy", 33.3, 2.44),
+                                  ("D:/std/c.xy", 75.0, 0.41)):
+            dlg.add_row(path, wr, ratio_i=ratio_i, ok=True)
+        payload = dlg.record()
+        assert payload["quantity"] == "height"
+        target = tmp_path / "k_h.json"
+        target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        other = KCalibWizardDialog()
+        try:
+            other.load_record(json.loads(target.read_text(encoding="utf-8")))
+            assert other.current_quantity() == "height", "载入记录应恢复口径"
+            assert other.rows[0]["ratio_i"] == 1.22, "恢复口径不得清掉已载测量值"
+        finally:
+            other.close()
+
+        legacy = KCalibWizardDialog()
+        try:
+            legacy_payload = json.loads(json.dumps(payload))
+            del legacy_payload["quantity"]
+            legacy.load_record(legacy_payload)
+            assert legacy.current_quantity() == "area", "旧记录缺口径时兜底 area"
+            assert legacy.rows[0]["ratio_i"] == 1.22
+        finally:
+            legacy.close()
+    finally:
+        dlg.close()
+
+
+def test_services_b_qpa_acid_check():
+    """_b_qpa 酸检：等标度下 w(锐) = 4×136.3/(4×136.3+2×62.42) ≈ 81.37%。"""
+    from rutana.core.profile.cif import parse_cif
+
+    root = Path(__file__).resolve().parent.parent
+    st_a = parse_cif(root / "rutana" / "data" / "anatase.cif")
+    st_r = parse_cif(root / "rutana" / "data" / "rutile.cif")
+    res = SimpleNamespace(scales=[1.0, 1.0],
+                          cell_scales=((1.0, 1.0), (1.0, 1.0)))
+    wa, wr = services._b_qpa([st_a, st_r], res)
+    assert wa == pytest.approx(81.37, abs=0.1)
+    assert wr == pytest.approx(18.63, abs=0.1)
+
+
+def test_services_b_qpa_degrades_to_none():
+    """定量输入非法（scale 全零）时 _b_qpa 降级为 (None, None) 而非抛异常。"""
+    from rutana.core.profile.cif import parse_cif
+
+    root = Path(__file__).resolve().parent.parent
+    st_a = parse_cif(root / "rutana" / "data" / "anatase.cif")
+    st_r = parse_cif(root / "rutana" / "data" / "rutile.cif")
+    res = SimpleNamespace(scales=[0.0, 0.0],
+                          cell_scales=((1.0, 1.0), (1.0, 1.0)))
+    assert services._b_qpa([st_a, st_r], res) == (None, None)

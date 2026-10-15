@@ -133,6 +133,18 @@ def measure_peak(pat: Any, expected: float, tol: float = 0.4,
     return measure(pat, expected, tol, **kwargs)
 
 
+#: 峰强口径：净峰面积（v1.0.0 实测最优，默认）与净峰高
+QUANTITY_AREA = "area"
+QUANTITY_HEIGHT = "height"
+
+
+def _peak_intensity(m: Any, quantity: str = QUANTITY_AREA) -> float:
+    """按口径从 PeakMeasure 取峰强（area=净峰面积 / height=净峰高）。"""
+    if quantity == QUANTITY_HEIGHT:
+        return float(getattr(m, "net_height", 0.0))
+    return float(getattr(m, "net_area", 0.0))
+
+
 def compute_ratio(ia: float, ir: float, k: float) -> Any:
     """由净峰强度与 K 计算 w_a/w_r -> RatioResult。"""
     compute = _core("method_a.compute_ratio")
@@ -169,16 +181,18 @@ def combine_duplicates(r1: Any, r2: Any, limit: float | None = None) -> dict:
 
 def run_method_a(pat: Any, win_a: tuple[float, float],
                  win_r: tuple[float, float], k: float,
-                 second_pat: Any = None, *, progress_cb: ProgressCb = None,
+                 second_pat: Any = None, *, quantity: str = QUANTITY_AREA,
+                 progress_cb: ProgressCb = None,
                  cancel_cb: Callable[[], bool] | None = None) -> dict:
     """A 法全流程：双窗口测峰 + 比率计算（可选第二份平行谱做双平行）。
 
-    返回 ``{"ia","ir","measure_a","measure_r","result","dup"}``，
+    ``quantity`` 为峰强口径：``"area"``（净峰面积，默认）或 ``"height"``
+    （净峰高）。返回 ``{"ia","ir","measure_a","measure_r","result","dup"}``，
     ``result`` 为 RatioResult（含 wa/wr/K/ia/ir），``dup`` 为合并结果或 None。
     """
     _emit(progress_cb, "busy.measure", 0.05)
     first = _measure_ratio(
-        pat, win_a, win_r,
+        pat, win_a, win_r, quantity,
         sub_progress(progress_cb, 0.05, 0.25), sub_progress(progress_cb, 0.25, 0.45),
         cancel_cb)
     _emit(progress_cb, "busy.ratio", 0.50)
@@ -186,7 +200,7 @@ def run_method_a(pat: Any, win_a: tuple[float, float],
     dup = None
     if second_pat is not None:
         second = _measure_ratio(
-            second_pat, win_a, win_r,
+            second_pat, win_a, win_r, quantity,
             sub_progress(progress_cb, 0.50, 0.70),
             sub_progress(progress_cb, 0.70, 0.90), cancel_cb)
         result2 = compute_ratio(second["ia"], second["ir"], k)
@@ -207,10 +221,11 @@ def run_method_a(pat: Any, win_a: tuple[float, float],
 
 
 def _measure_ratio(pat: Any, win_a: tuple[float, float], win_r: tuple[float, float],
-                   cb_a: ProgressCb, cb_r: ProgressCb,
+                   quantity: str, cb_a: ProgressCb, cb_r: ProgressCb,
                    cancel_cb: Callable[[], bool] | None) -> dict:
-    """在一个窗口对上测量两相净峰强度（A 峰/ R 峰各自独立的子进度区间）。
+    """在一个窗口对上测量两相峰强（A 峰/ R 峰各自独立的子进度区间）。
 
+    ``quantity`` 为峰强口径（``"area"`` 净峰面积 / ``"height"`` 净峰高）。
     两相分别映射到互不重叠的进度区间，保证进度条单调推进、不来回跳动；
     被用户取消时抛 :class:`TaskCanceled`。
     """
@@ -228,8 +243,8 @@ def _measure_ratio(pat: Any, win_a: tuple[float, float], win_r: tuple[float, flo
         name = "A(锐钛型)" if bad_ma else "R(金红石型)"
         raise ValueError(f"{name}: {getattr(bad, 'message', '')}")
     return {
-        "ia": float(getattr(ma, "net_height", 0.0)),
-        "ir": float(getattr(mr, "net_height", 0.0)),
+        "ia": _peak_intensity(ma, quantity),
+        "ir": _peak_intensity(mr, quantity),
         "measure_a": ma,
         "measure_r": mr,
     }
@@ -240,11 +255,13 @@ def _measure_ratio(pat: Any, win_a: tuple[float, float], win_r: tuple[float, flo
 # --------------------------------------------------------------------------- #
 def measure_calib_rows(rows: list[dict], win_a: tuple[float, float],
                        win_r: tuple[float, float], *,
+                       quantity: str = QUANTITY_AREA,
                        progress_cb: ProgressCb = None,
                        cancel_cb: Callable[[], bool] | None = None) -> list[dict]:
     """逐行读取谱图并测量 I(A)/I(R)。
 
     rows: ``[{"file": str, "wr": float(金红石型质量分数 %)}, ...]``
+    ``quantity`` 为峰强口径（``"area"`` 净峰面积 / ``"height"`` 净峰高）。
     返回逐行结果列表（顺序一致）::
 
         {"file","wr","ratio_m","ratio_i","ia","ir","ok","message"}
@@ -268,8 +285,8 @@ def measure_calib_rows(rows: list[dict], win_a: tuple[float, float],
             pat = load_pattern(path)
             ma = measure_peak(pat, center_a, tol_a)
             mr = measure_peak(pat, center_r, tol_r)
-            ia = float(getattr(ma, "net_height", 0.0))
-            ir = float(getattr(mr, "net_height", 0.0))
+            ia = _peak_intensity(ma, quantity)
+            ir = _peak_intensity(mr, quantity)
             if not getattr(ma, "ok", False) or not getattr(mr, "ok", False):
                 bad = ma if not getattr(ma, "ok", False) else mr
                 row["message"] = str(getattr(bad, "message", ""))
@@ -310,8 +327,10 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
                  cancel_cb: Callable[[], bool] | None = None) -> dict:
     """B 法全流程：内置两相 + 可选附加 CIF 的 Rietveld 精修。
 
-    返回 ``{"result": RefineResult, "two_theta", "ycalc", "diff"}``，
-    其中 ycalc/diff 与观测谱同网格，可直接交给画布叠加显示。
+    返回 ``{"result": RefineResult, "two_theta", "ycalc", "diff", "wa", "wr"}``，
+    其中 ycalc/diff 与观测谱同网格，可直接交给画布叠加显示；
+    ``wa``/``wr`` 为内置两相的 w(锐钛型)% / w(金红石型)%（Hill–Howard 定量，
+    定量失败时为 None，不影响 R 因子结果）。
     """
     parse_cif = _core("profile.cif.parse_cif")
     profile_params = _core("refine.realdata.real_params")
@@ -350,12 +369,40 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
 
     two_theta = pat.two_theta
     ycalc = res.ycalc
+    wa, wr = _b_qpa(phases, res)
     return {
         "result": res,
         "two_theta": two_theta,
         "ycalc": ycalc,
         "diff": pat.intensity - ycalc,
+        "wa": wa,
+        "wr": wr,
     }
+
+
+def _b_qpa(phases: list, res: Any) -> tuple[float | None, float | None]:
+    """由精修结果换算内置两相 (w(锐钛型)%, w(金红石型)%)；失败返回 (None, None)。
+
+    Hill–Howard 公式（见 :mod:`rutana.core.refine.qpa`）：W ∝ S·Z·V·M；
+    晶胞体积按精修后的晶胞缩放（``cell_scales`` 的 (fa, fc) 作用于 a/c 轴）。
+    仅取前两相（内置锐钛/金红石）做相对比率，附加物相不参与；任何定量
+    异常都降级为 (None, None)，不阻断 R 因子结果展示。
+    """
+    try:
+        qpa_inputs = _core("refine.qpa.qpa_inputs_from_cif")
+        qpa_weights = _core("refine.qpa.qpa_weights")
+        to_ratio = _core("refine.qpa.to_ratio")
+        st_a, st_r = phases[0], phases[1]
+        za, _va0, ma_ = qpa_inputs(st_a, "O2 Ti")
+        zr, _vr0, mr_ = qpa_inputs(st_r, "O2 Ti")
+        (fa_a, fc_a), (fa_r, fc_r) = res.cell_scales
+        va = (st_a.cell[0] * fa_a) ** 2 * (st_a.cell[2] * fc_a)
+        vr = (st_r.cell[0] * fa_r) ** 2 * (st_r.cell[2] * fc_r)
+        ws = qpa_weights([(st_a.name, float(res.scales[0]), za, va, ma_),
+                          (st_r.name, float(res.scales[1]), zr, vr, mr_)])
+        return to_ratio(ws, 0, 1)
+    except Exception:  # noqa: BLE001 —— 定量失败不阻断 R 因子结果
+        return None, None
 
 
 def _builtin_cif_path():
