@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from rutana.gui import services
+from rutana.gui.batch import is_tool_csv
 from rutana.gui.canvas import PatternCanvas
 from rutana.gui.dialogs import AboutDialog, CopyrightDialog
 from rutana.gui.exports import ExportMixin
@@ -224,24 +225,44 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self._import_paths(paths)
 
     def _import_paths(self, paths) -> None:
-        """逐个读取并登记谱图；单文件失败只提示、不中断其余。"""
+        """读取并登记谱图；本工具产物 CSV 自动跳过；失败最后汇总弹一次。
+
+        v1.3.0：批量导入不再逐文件弹模态框——累计失败后弹一次汇总
+        （失败明细同步写状态栏）；「添加文件夹」把本工具导出的结果
+        CSV 误当谱图的问题在此统一过滤（两条导入路径都经过本方法）。
+        """
         if not paths:
             return
         last_ok: str | None = None
+        ok_n = 0
+        failed: list[str] = []
+        skipped = 0
         for p in paths:
+            if is_tool_csv(p):
+                skipped += 1
+                continue
+            name = Path(p).name
             try:
                 pat = services.load_pattern(p)
-            except services.CoreUnavailableError as exc:
-                self._msg("msg.core_unavailable", str(exc), error=True)
-                continue
             except Exception as exc:  # noqa: BLE001 —— 统一转成用户可读提示
-                self._msg("msg.load_fail", str(exc), error=True)
+                failed.append(f"{name}: {exc}")
                 continue
             self._patterns[p] = pat
-            self.file_list.addItem(Path(p).name)
+            self.file_list.addItem(name)
             last_ok = p
+            ok_n += 1
         if last_ok:
             self.file_list.setCurrentRow(list(self._patterns).index(last_ok))
+        if failed:
+            preview = "、".join(failed[:5]) + ("…" if len(failed) > 5 else "")
+            self.statusBar().showMessage("；".join(failed))
+            text = tr("msg.import_fail_summary", ok=ok_n, fail=len(failed),
+                      names=preview)
+            if skipped:
+                text += "\n" + tr("msg.import_skipped", n=skipped)
+            self._msg_box(text, error=True)
+        elif skipped:
+            self._msg_box(tr("msg.import_skipped", n=skipped))
 
     def _on_remove_file(self) -> None:
         row = self.file_list.currentRow()

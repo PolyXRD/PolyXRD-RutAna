@@ -32,6 +32,14 @@ FALLBACK_ABS_LIMIT = 0.15
 #: B 法 Rwp 拟合良好阈值（%）
 RWP_GOOD_LIMIT = 10.0
 
+# PROTOCOL_V100 的背景参数（docs/VALIDATION_v1.0.0.md §A.3 实证最优配置）。
+# v1.3.0 起 GUI 的 A 法测峰（K 标定向导与样品计算两条路径）统一传给 core，
+# 消除「GUI 用 core 缺省背景参数」与「core v1.0.0 协议」不一致造成的
+# 跨 K 系统偏差（对齐前 pd 全谱实测谱 wr 最大相对误差 −15.9%）。
+# 数值与 core 的 PROTOCOL_V100（rutana.core.peakmeasure）保持同步。
+V100_BG_PARAMS: dict[str, Any] = {"mode": "linear_edges", "edge_frac": 0.14}
+V100_BG_MARGIN = 0.18
+
 #: 进度回调签名 cb(message: str, pct: float | None)（pct 为 0..1 比例）
 ProgressCb = Callable[[str, "float | None"], None] | None
 
@@ -120,12 +128,23 @@ def load_pattern(path: str, progress_cb: ProgressCb = None) -> Any:
     return load(path)
 
 
+def _v100_bg() -> Any:
+    """构造 PROTOCOL_V100 背景配置（延迟导入 core，保持本模块懒加载约定）。"""
+    return _core("background.BgConfig")(**V100_BG_PARAMS)
+
+
 def measure_peak(pat: Any, expected: float, tol: float = 0.4,
                  progress_cb: ProgressCb = None,
                  cancel_cb: Callable[[], bool] | None = None) -> Any:
-    """在 [expected-tol, expected+tol] 内测量净峰强度 -> PeakMeasure。"""
+    """在 [expected-tol, expected+tol] 内测量净峰强度 -> PeakMeasure。
+
+    v1.3.0 起统一传入 PROTOCOL_V100 的背景参数（``V100_BG_PARAMS`` /
+    ``V100_BG_MARGIN``，见 docs/VALIDATION_v1.0.0.md §A.3）：K 标定向导
+    （``measure_calib_rows``）与样品计算（``_measure_ratio``）都经本函数
+    测峰，天然同口径（同参铁律）；峰强口径由调用方另行指定。
+    """
     measure = _core("peakmeasure.measure_peak")
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"cfg": _v100_bg(), "bg_margin": V100_BG_MARGIN}
     if supports_param(measure, "progress_cb"):
         kwargs["progress_cb"] = progress_cb
     if cancel_cb is not None and supports_param(measure, "cancel_cb"):

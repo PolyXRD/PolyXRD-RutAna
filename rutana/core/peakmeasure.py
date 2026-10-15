@@ -164,6 +164,9 @@ def _half_width_crossing(tt: np.ndarray, resid: np.ndarray,
             return None  # 到窗口边界仍未降到半高：FWHM 不可定
         x1, x2 = float(tt[j]), float(tt[k])
         r1, r2 = float(resid[j]), float(resid[k])
+        if r2 == r1:
+            # 残差在此段恒定（如完全平坦谱）：交点不可定，取段末点兜底
+            return x2
         return x1 + (half - r1) * (x2 - x1) / (r2 - r1)
 
     return walk(-1), walk(1)
@@ -212,17 +215,21 @@ def measure_peak(p: Pattern, expected: float, tol: float = 0.4,
         return PeakMeasure(expected, 0.0, 0.0, 0.0, float("nan"), 0.0,
                            False, "搜索窗内无数据点")
     _emit(progress_cb, "正在定位峰位与积分", 0.65)
-    j = int(np.argmax(np.where(sel, y, -np.inf)))
-    tt_max = float(sub.two_theta[j])
-    net_height = float(y[j] - bg[j])
-    step = float(np.median(np.diff(sub.two_theta)))
-    net_area = float(np.sum(resid[sel]) * step)
-    left, right = _half_width_crossing(sub.two_theta, resid, j,
-                                       net_height / 2.0)
-    fwhm = (right - left) if (left is not None and right is not None) \
-        else float("nan")
-    sigma = _robust_sigma(resid)
-    snr = net_height / sigma if sigma > 0 else float("inf")
+    try:
+        j = int(np.argmax(np.where(sel, y, -np.inf)))
+        tt_max = float(sub.two_theta[j])
+        net_height = float(y[j] - bg[j])
+        step = float(np.median(np.diff(sub.two_theta)))
+        net_area = float(np.sum(resid[sel]) * step)
+        left, right = _half_width_crossing(sub.two_theta, resid, j,
+                                           net_height / 2.0)
+        fwhm = (right - left) if (left is not None and right is not None) \
+            else float("nan")
+        sigma = _robust_sigma(resid)
+        snr = net_height / sigma if sigma > 0 else float("inf")
+    except Exception as exc:  # noqa: BLE001 —— 峰形退化等算术异常转可读提示，绝不裸抛
+        return PeakMeasure(expected, 0.0, 0.0, 0.0, float("nan"), 0.0,
+                           False, f"峰形退化，无法测量（{exc}）")
     ok = snr >= SNR_MIN and net_height > 0.0
     if ok:
         msg = "OK"

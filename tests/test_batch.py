@@ -215,6 +215,47 @@ def test_run_method_a_batch_reraises_core_unavailable(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# v1.3.0：本工具产物 CSV 识别（is_tool_csv）
+# --------------------------------------------------------------------------- #
+def test_is_tool_csv_detects_own_product(tmp_path):
+    """本工具 A/B 两法导出的结果 CSV 应被识别为工具产物。"""
+    rows = [_row("D:/x/a.xy", wa=42.5, wr=57.5, K=1.22, ia=1200.0, ir=800.0)]
+    dest_a = tmp_path / "a.csv"
+    batch.export_batch_csv(rows, dest_a, method="a")
+    dest_b = tmp_path / "b.csv"
+    batch.export_batch_csv(rows, dest_b, method="b")
+    assert batch.is_tool_csv(dest_a)
+    assert batch.is_tool_csv(dest_b)
+
+
+def test_is_tool_csv_rejects_normal_and_broken(tmp_path):
+    """普通两列谱 CSV / 空文件 / 乱码文件 / 不存在的路径都不算工具产物。"""
+    two_col = tmp_path / "spec.csv"
+    two_col.write_text("2theta,intensity\n10.0,100\n", encoding="utf-8")
+    (tmp_path / "empty.csv").write_text("", encoding="utf-8")
+    (tmp_path / "bin.csv").write_bytes(b"\xff\xfe\x00garbage")
+    seven_col = tmp_path / "seven.csv"
+    seven_col.write_text("a,b,c,d,e,f,g\n", encoding="utf-8")
+    assert not batch.is_tool_csv(two_col)
+    assert not batch.is_tool_csv(tmp_path / "empty.csv")
+    assert not batch.is_tool_csv(tmp_path / "bin.csv")
+    assert not batch.is_tool_csv(seven_col), "列数相同但表头不符也不算"
+    assert not batch.is_tool_csv(tmp_path / "nope.csv")
+
+
+def test_is_tool_csv_accepts_other_language_header(tmp_path):
+    """其它 UI 语言导出的表头（如 en_US 的 File 列）同样要能识别。"""
+    from rutana.i18n.translations import en_US as en
+
+    p = tmp_path / "en.csv"
+    header = ",".join(["File", "w(anatase)%", "w(rutile)%", "K",
+                       "I(A)", "I(R)", "Status / note"])
+    p.write_text(header + "\na.xy,1,2,3,4,5,OK\n", encoding="utf-8")
+    assert en.TRANSLATIONS["batch.csv.file"] == "File"
+    assert batch.is_tool_csv(p)
+
+
+# --------------------------------------------------------------------------- #
 # 精修谱图 PNG（离屏）
 # --------------------------------------------------------------------------- #
 def test_export_fit_png_nonempty(tmp_path):

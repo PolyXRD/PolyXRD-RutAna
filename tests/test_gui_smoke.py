@@ -201,6 +201,31 @@ def test_services_module_lazy():
     assert issubclass(services.TaskCanceled, RuntimeError)
 
 
+def test_services_measure_peak_passes_v100_bg(monkeypatch):
+    """v1.3.0：services 测峰统一传 PROTOCOL_V100 背景参数（GUI 与 core 协议对齐）。"""
+    from rutana.core.background import BgConfig
+    from rutana.core.peakmeasure import PROTOCOL_V100
+
+    seen: dict = {}
+
+    def fake_measure(pat, expected, tol, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(ok=True, net_height=1.0, net_area=1.0)
+
+    def fake_loader(key):
+        if key == "peakmeasure.measure_peak":
+            return fake_measure
+        if key == "background.BgConfig":
+            return BgConfig
+        raise KeyError(key)
+
+    monkeypatch.setattr(services, "_core", fake_loader)
+    services.measure_peak(object(), 25.5, 1.0)
+    assert isinstance(seen["cfg"], BgConfig)
+    assert seen["cfg"] == PROTOCOL_V100.bg, "背景配置应与 core 协议逐字段一致"
+    assert seen["bg_margin"] == PROTOCOL_V100.bg_margin
+
+
 def test_main_window_construct(qapp, stub_core):
     """主窗口可构造（含菜单/三栏布局/状态栏），并可正常关闭。"""
     w = MainWindow()
@@ -257,9 +282,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_120():
-    """版本号已推进到 1.2.0（UI 版本号与 EXE 名同源）。"""
-    assert __version__ == "1.2.0"
+def test_version_is_130():
+    """版本号已推进到 1.3.0（UI 版本号与 EXE 名同源）。"""
+    assert __version__ == "1.3.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -842,6 +867,79 @@ def test_run_task_a_batch_requires_positive_k(qapp, stub_core, monkeypatch):
         _add_pattern(w)
         monkeypatch.setattr(w.tabs.a_panel, "current_k", lambda: 0.0)
         assert w.run_task_a_batch() is None
+    finally:
+        w.close()
+
+
+# --------------------------------------------------------------------------- #
+# v1.3.0：导入过滤（跳过本工具产物 CSV）与失败汇总弹窗
+# --------------------------------------------------------------------------- #
+def _tool_row(path: str) -> dict:
+    """构造一条批量结果行（供导出本工具产物 CSV 用）。"""
+    return {"path": path, "sample": Path(path).stem, "wa": 40.0, "wr": 60.0,
+            "K": 1.22, "ia": 1000.0, "ir": 800.0, "ok": True, "message": ""}
+
+
+def _capture_msg_boxes(monkeypatch) -> list[str]:
+    """记录弹出的 QMessageBox 文本（配合 no_modal_exec 屏蔽模态循环）。"""
+    boxes: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox, "exec",
+        lambda self, *a, **k: boxes.append(self.text()) or int(QDialog.Accepted))
+    return boxes
+
+
+def test_import_paths_skips_tool_csv_and_aggregates_failures(
+        qapp, stub_core, no_modal_exec, tmp_path, monkeypatch):
+    """混合导入：工具产物 CSV 跳过、失败汇总只弹一次、成功文件照常入列表。"""
+    from rutana.gui import batch as batchmod
+
+    folder = tmp_path / "mix"
+    folder.mkdir()
+    good1, good2 = folder / "g1.xy", folder / "g2.xy"
+    good1.write_text("24.0 100\n", encoding="utf-8")
+    good2.write_text("24.0 100\n", encoding="utf-8")
+    bad = folder / "bad.xy"
+    bad.write_text("garbage", encoding="utf-8")
+    tool_csv = folder / "批样1.csv"
+    batchmod.export_batch_csv([_tool_row(str(good1))], tool_csv, method="a")
+
+    def fake_load(path):
+        if Path(path).name == "bad.xy":
+            raise ValueError("boom")
+        return _fake_pattern(Path(path).name)
+
+    services.load_pattern.side_effect = fake_load
+    boxes = _capture_msg_boxes(monkeypatch)
+    w = MainWindow()
+    try:
+        w._import_paths([str(good1), str(tool_csv), str(bad), str(good2)])
+        assert {Path(p).name for p in w._patterns} == {"g1.xy", "g2.xy"}, \
+            "成功文件应正常入列表，工具产物 CSV 应被跳过"
+        assert len(boxes) == 1, "失败必须汇总成一次弹窗，不许逐文件弹"
+        assert tr("msg.import_fail_summary", ok=2, fail=1,
+                  names="bad.xy: boom") in boxes[0]
+        assert tr("msg.import_skipped", n=1) in boxes[0], \
+            "跳过数应并入汇总弹窗"
+    finally:
+        services.load_pattern.side_effect = None
+        w.close()
+
+
+def test_import_single_tool_csv_gives_clear_hint(
+        qapp, stub_core, no_modal_exec, tmp_path, monkeypatch):
+    """手动单选本工具产物 CSV：明确提示已跳过，而不是「有效数据点不足」。"""
+    from rutana.gui import batch as batchmod
+
+    tool_csv = tmp_path / "single.csv"
+    batchmod.export_batch_csv([_tool_row("D:/x/a.xy")], tool_csv, method="a")
+    boxes = _capture_msg_boxes(monkeypatch)
+    w = MainWindow()
+    try:
+        w._import_paths([str(tool_csv)])
+        assert not w._patterns, "工具产物 CSV 不应入列表"
+        assert not services.load_pattern.call_count, "跳过的文件不应触发读取"
+        assert boxes == [tr("msg.import_skipped", n=1)]
     finally:
         w.close()
 

@@ -30,6 +30,7 @@ TRANSLATIONS: dict[str, str] = {
     "tab.b": "Method B · Full-pattern fit",
     # ---- Method A panel ----
     "a.windows": "Measurement windows (2θ, °)",
+    "a.windows.tip": "v1.0.0 tuned-protocol default windows: anatase 25.34±0.25°, rutile 27.47±1.05° (docs/VALIDATION_v1.0.0.md §A.3); adjust manually to match your instrument.",
     "a.anatase": "Anatase (101)",
     "a.rutile": "Rutile (110)",
     "a.tmin": "From (°)",
@@ -101,6 +102,8 @@ TRANSLATIONS: dict[str, str] = {
     "msg.batch_fail": "Batch computation failed:\n{detail}",
     "msg.batch_done": "Batch finished: {ok} succeeded, {fail} failed.\nResult files:\n{paths}",
     "msg.batch_canceled": "Batch canceled: results of {ok} completed files were saved.\nResult files:\n{paths}",
+    "msg.import_fail_summary": "Imported {ok} successfully; {fail} file(s) failed:\n{names}",
+    "msg.import_skipped": "Skipped {n} result file(s) exported by this tool (not imported as patterns).",
     # ---- File dialogs ----
     "dlg.open_pattern": "Open pattern file",
     "dlg.add_folder": "Select pattern folder",

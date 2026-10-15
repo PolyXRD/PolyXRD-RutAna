@@ -42,6 +42,7 @@ from rutana.gui import services
 from rutana.gui.calibcanvas import CalibCanvas
 from rutana.gui.calibrecord import build_record, mass_ratio_from_wr, parse_record
 from rutana.gui.calibtable import CalibTable
+from rutana.gui.panels import V100_WIN_A, V100_WIN_R
 from rutana.gui.workers import run_busy_task
 from rutana.i18n import tr
 
@@ -59,8 +60,8 @@ class KCalibWizardDialog(QDialog):
     k_adopted = Signal(float, float, float, str)
 
     def __init__(self, parent: QWidget | None = None, *,
-                 win_a: tuple[float, float] = (24.5, 26.5),
-                 win_r: tuple[float, float] = (26.5, 28.5)) -> None:
+                 win_a: tuple[float, float] = V100_WIN_A,
+                 win_r: tuple[float, float] = V100_WIN_R) -> None:
         super().__init__(parent)
         self._win_a = (float(win_a[0]), float(win_a[1]))
         self._win_r = (float(win_r[0]), float(win_r[1]))

@@ -30,6 +30,7 @@ TRANSLATIONS: dict[str, str] = {
     "tab.b": "方法 B · 全パターンフィット",
     # ---- 方法 A パネル ----
     "a.windows": "測定ウィンドウ (2θ, °)",
+    "a.windows.tip": "v1.0.0 調整プロトコルの既定窓：アナターゼ 25.34±0.25°、ルチル 27.47±1.05°（docs/VALIDATION_v1.0.0.md §A.3）。必要に応じて手動で調整できます。",
     "a.anatase": "アナターゼ (101)",
     "a.rutile": "ルチル (110)",
     "a.tmin": "開始 (°)",
@@ -101,6 +102,8 @@ TRANSLATIONS: dict[str, str] = {
     "msg.batch_fail": "一括計算に失敗：\n{detail}",
     "msg.batch_done": "一括処理が完了：成功 {ok} 件、失敗 {fail} 件。\n結果ファイル：\n{paths}",
     "msg.batch_canceled": "一括処理を中止：完了済み {ok} 件の結果を保存しました。\n結果ファイル：\n{paths}",
+    "msg.import_fail_summary": "成功 {ok} 件；{fail} 件の読み込みに失敗：\n{names}",
+    "msg.import_skipped": "本ツールが書き出した結果ファイル {n} 件をスキップしました（パターンとしては読み込みません）。",
     # ---- ファイルダイアログ ----
     "dlg.open_pattern": "パターンファイルを開く",
     "dlg.add_folder": "パターンのフォルダーを選択",

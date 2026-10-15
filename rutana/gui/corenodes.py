@@ -46,6 +46,9 @@ def core_symbol(key: str) -> Any:
         if key == "patterns.load_pattern":
             from rutana.core.patterns import load_pattern
             return load_pattern
+        if key == "background.BgConfig":
+            from rutana.core.background import BgConfig
+            return BgConfig
         if key == "peakmeasure.measure_peak":
             from rutana.core.peakmeasure import measure_peak
             return measure_peak

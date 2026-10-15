@@ -39,6 +39,14 @@ A_RESULT_ROWS = (
 #: R² 告警阈值（低于此值提示线性不佳）
 R2_WARN_LIMIT = 0.995
 
+#: PROTOCOL_V100 协议默认测量窗（docs/VALIDATION_v1.0.0.md §A.3，真实数据实测最优）：
+#: 锐钛型 25.34±0.25°、金红石型 27.47±1.05°（Cu Kα 双线复合峰重心）。
+#: v1.3.0 起 A 面板与 K 标定向导的默认窗统一取此值（与 core 协议同参，
+#: 消除宽窗把非特异弥散晕积进 I(A) 造成的系统偏差，pd 全谱实测
+#: wr 相对误差由 −10.3/−10.0/−7.4% 收敛到 −0.84/−1.21/−0.65%）。
+V100_WIN_A = (25.09, 25.59)
+V100_WIN_R = (26.42, 28.52)
+
 
 class APanel(QWidget):
     """A 法（强度比值法）面板：双窗口、K 值、参考真值与结果卡。"""
@@ -72,11 +80,11 @@ class APanel(QWidget):
             spin_max.setDecimals(2)
             spin_max.setSingleStep(0.1)
             if phase_key == "a.anatase":
-                spin_min.setValue(24.5)
-                spin_max.setValue(26.5)
+                spin_min.setValue(V100_WIN_A[0])
+                spin_max.setValue(V100_WIN_A[1])
             else:
-                spin_min.setValue(26.5)
-                spin_max.setValue(28.5)
+                spin_min.setValue(V100_WIN_R[0])
+                spin_max.setValue(V100_WIN_R[1])
             h.addWidget(spin_min)
             h.addWidget(spin_max)
             grid.addLayout(h)
@@ -231,6 +239,7 @@ class APanel(QWidget):
     # ------------------------------------------------------------------ #
     def retranslate(self) -> None:
         self.grp_windows.setTitle(tr("a.windows"))
+        self.grp_windows.setToolTip(tr("a.windows.tip"))
         self.lab_anatase.setText(tr("a.anatase"))
         self.lab_rutile.setText(tr("a.rutile"))
         self.sp_a_min.setToolTip(tr("a.tmin"))

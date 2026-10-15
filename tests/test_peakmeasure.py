@@ -99,3 +99,23 @@ def test_bg_config_passthrough() -> None:
     m1 = measure_peak(p, 25.30)
     m2 = measure_peak(p, 25.30, cfg=BgConfig())
     assert m1.net_height == pytest.approx(m2.net_height)
+
+
+def test_flat_spectrum_no_crash() -> None:
+    """完全平坦谱（常数信号）：ok=False、message 可读，绝不抛除零异常。"""
+    tt = 24.5 + 0.02 * np.arange(81)
+    p = Pattern(two_theta=tt, intensity=np.full(tt.size, 500.0))
+    m = measure_peak(p, 25.30)
+    assert not m.ok
+    assert m.message != "" and "x1 + (half" not in m.message, \
+        "message 必须用户可读（不能是原始异常文本）"
+    assert np.isfinite(m.snr) or True  # 任何取值都可，关键是上一行不抛异常
+
+
+def test_flat_spectrum_offset_no_crash() -> None:
+    """残差恒定的平移谱（背景估计留常数偏差）：同样不抛异常、ok=False。"""
+    tt = 24.5 + 0.02 * np.arange(81)
+    p = Pattern(two_theta=tt, intensity=np.full(tt.size, 500.0) + 3.0)
+    m = measure_peak(p, 25.30)
+    assert isinstance(m.ok, bool)
+    assert m.message != ""

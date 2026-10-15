@@ -28,12 +28,37 @@ from typing import Any, Callable, Iterable, Sequence
 
 from rutana.gui import services
 from rutana.i18n import tr
+from rutana.i18n.translations import en_US, ja_JP, zh_CN
 
 #: 进度回调签名 cb(message: str, pct: float | None)（pct 为 0..1 比例）
 ProgressCb = Callable[[str, "float | None"], None] | None
 
 #: 冲突序号上限（防呆，正常不会触到）
 _MAX_SUFFIX = 999
+
+#: 本工具批量 CSV 的首列表头（三语全集）：识别导入时的自家产物用
+_TOOL_FILE_HEADERS = frozenset(
+    t.TRANSLATIONS["batch.csv.file"] for t in (zh_CN, en_US, ja_JP))
+#: 本工具批量 CSV 的固定列数（A/B 两法都是 7 列）
+_TOOL_CSV_COLUMNS = 7
+
+
+def is_tool_csv(path: Any) -> bool:
+    """判断一个文件是否为本工具批量导出的结果 CSV（而非谱图数据）。
+
+    读首行按 UTF-8（容错 BOM/乱码）解析：列数等于本工具表头列数且首列
+    是任一语言下的「文件名」表头即判定为本工具产物。普通两列谱图 CSV、
+    空文件、乱码文件均返回 False。
+    """
+    try:
+        with Path(str(path)).open("r", encoding="utf-8-sig",
+                                  errors="replace", newline="") as fh:
+            row = next(csv.reader(fh), None)
+    except OSError:
+        return False
+    if not row:
+        return False
+    return len(row) == _TOOL_CSV_COLUMNS and row[0].strip() in _TOOL_FILE_HEADERS
 
 
 def _emit(cb: ProgressCb, key: str, pct: float | None = None, **kw) -> None:

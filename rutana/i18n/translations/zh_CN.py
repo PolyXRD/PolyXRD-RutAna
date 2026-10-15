@@ -30,6 +30,7 @@ TRANSLATIONS: dict[str, str] = {
     "tab.b": "B 法 · 全谱拟合",
     # ---- A 法面板 ----
     "a.windows": "测量窗口 (2θ, °)",
+    "a.windows.tip": "v1.0.0 调优协议默认窗：锐钛 25.34±0.25°、金红石 27.47±1.05°（docs/VALIDATION_v1.0.0.md §A.3）；可按仪器实际峰位手动调整。",
     "a.anatase": "锐钛型 (101)",
     "a.rutile": "金红石型 (110)",
     "a.tmin": "起 (°)",
@@ -101,6 +102,8 @@ TRANSLATIONS: dict[str, str] = {
     "msg.batch_fail": "批量计算失败：\n{detail}",
     "msg.batch_done": "批量完成：成功 {ok} 个，失败 {fail} 个。\n结果文件：\n{paths}",
     "msg.batch_canceled": "批量已取消：已完成 {ok} 个文件的结果已保存。\n结果文件：\n{paths}",
+    "msg.import_fail_summary": "成功导入 {ok} 个；{fail} 个文件导入失败：\n{names}",
+    "msg.import_skipped": "已跳过 {n} 个本工具导出的结果文件（不作为谱图导入）。",
     # ---- 文件对话框 ----
     "dlg.open_pattern": "打开谱图文件",
     "dlg.add_folder": "选择谱图文件夹",
