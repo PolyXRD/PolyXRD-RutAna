@@ -56,10 +56,14 @@ class PatternCanvas(FigureCanvasQTAgg):
     def show_fit(self, two_theta: np.ndarray, yobs: np.ndarray,
                  ycalc: np.ndarray, diff: np.ndarray) -> None:
         """拟合叠加：上 2/3 obs+calc，下 1/3 差值线（共用 x 轴）。"""
-        self._reset_axes()
-        gs = self.figure.add_gridspec(2, 1, height_ratios=[2, 1], hspace=0.08)
-        self.ax_main = self.figure.add_subplot(gs[0])
-        self.ax_diff = self.figure.add_subplot(gs[1], sharex=self.ax_main)
+        # 注意：这里必须彻底清空 figure（不能复用 ``_reset_axes``）——
+        # 后者会保留一个 111 主轴，若在其上再叠加 two-row 子图，
+        # 会残留一个 0..1 归一化坐标的空坐标框，导致刻度标签重影。
+        # 也不要用 ``add_gridspec`` + 自定义 hspace：tight_layout 与之不兼容
+        # （告警并放弃重排，x 轴标题会被裁掉），故改用 ``Figure.subplots``。
+        self._clear_figure()
+        self.ax_main, self.ax_diff = self.figure.subplots(
+            2, 1, height_ratios=[2, 1], sharex=True)
         self.ax_main.plot(two_theta, yobs, color=INK, lw=0.8, label=tr("canvas.legend.obs"))
         self.ax_main.plot(two_theta, ycalc, color=BRAND, lw=1.0, label=tr("canvas.legend.calc"))
         self.ax_diff.plot(two_theta, diff, color=CYAN, lw=0.8)
@@ -68,8 +72,8 @@ class PatternCanvas(FigureCanvasQTAgg):
         self.ax_diff.set_xlabel(tr("canvas.x_label"))
         self.ax_diff.set_ylabel(tr("canvas.legend.diff"))
         self.ax_diff.grid(True, color=GRID, lw=0.4, alpha=0.5)
-        # x 轴刻度标签由主图统一显示
-        self.ax_diff.tick_params(labelbottom=False)
+        # x 轴刻度标签只在下方差值图上显示一次（共用 x 轴，避免重复标注）
+        self.ax_diff.tick_params(labelbottom=True)
         self.ax_main.tick_params(labelbottom=False)
         self._has_data = True
         self.figure.tight_layout()
@@ -102,8 +106,15 @@ class PatternCanvas(FigureCanvasQTAgg):
     # 内部工具
     # ------------------------------------------------------------------ #
     def _reset_axes(self) -> None:
+        """清空画布并重建单个主轴（单谱显示模式使用）。"""
         self.figure.clf()
         self.ax_main = self.figure.add_subplot(111)
+        self.ax_diff = None
+
+    def _clear_figure(self) -> None:
+        """彻底清空 figure（不留任何 axes），供多子图模式重新布局前调用。"""
+        self.figure.clf()
+        self.ax_main = None
         self.ax_diff = None
 
     def _show_empty(self) -> None:
