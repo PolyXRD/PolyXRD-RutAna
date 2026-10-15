@@ -257,9 +257,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_110():
-    """版本号已推进到 1.1.0（UI 版本号与 EXE 名同源）。"""
-    assert __version__ == "1.1.0"
+def test_version_is_120():
+    """版本号已推进到 1.2.0（UI 版本号与 EXE 名同源）。"""
+    assert __version__ == "1.2.0"
 
 
 # --------------------------------------------------------------------------- #
@@ -738,6 +738,110 @@ def test_apanel_reference_truth_relative_error(qapp, stub_core):
         panel.set_result_a(result, None, None, 50.0)
         assert panel.card_a.value("result.ref_err") == "+2.00", \
             "相对误差应按金红石 wt% 计算：(51-50)/50"
+    finally:
+        w.close()
+
+
+# --------------------------------------------------------------------------- #
+# v1.2.0：批量计算（A/B 面板入口 + 落盘 + 三语文案）
+# --------------------------------------------------------------------------- #
+def test_batch_buttons_present_in_all_languages(qapp, stub_core):
+    """A/B 面板都有批量入口，三语 retranslate 无缺 key。"""
+    from rutana.gui import batch as batchmod
+
+    assert hasattr(batchmod, "run_method_a_batch")
+    w = MainWindow()
+    try:
+        for lang in ("zh_CN", "en_US", "ja_JP"):
+            set_language(lang)
+            w.retranslateUi()
+            assert w.tabs.a_panel.btn_batch.text() == tr("a.batch")
+            assert w.tabs.b_panel.btn_batch.text() == tr("b.batch")
+            assert w.act_add_folder.text() == tr("menu.file.add_folder")
+            assert w.act_add_folder.text().strip(), "文案不能为空"
+    finally:
+        set_language("zh_CN")
+        w.close()
+
+
+def test_run_task_a_batch_writes_folder_csv(qapp, stub_core, tmp_path):
+    """A 法批量：同文件夹 2 个文件 -> <文件夹名>.csv，首个结果回填结果卡。"""
+    from rutana.gui import batch as batchmod
+
+    folder = tmp_path / "批样1"
+    folder.mkdir()
+    w = MainWindow()
+    try:
+        for name in ("s1.xy", "s2.xy"):
+            _add_pattern(w, str(folder / name))
+        w.tabs.a_panel.sp_k.setValue(1.22)
+
+        def fake_batch(items, win_a, win_r, k, **kwargs):
+            assert kwargs.get("progress_cb") is not None, "批量也要进度回调"
+            return [{"path": p, "sample": Path(p).stem, "wa": 40.0, "wr": 60.0,
+                     "K": k, "ia": 1000.0, "ir": 800.0, "ok": True, "message": ""}
+                    for p, _pat in items]
+
+        with mock.patch.object(batchmod, "run_method_a_batch", fake_batch):
+            thread = w.run_task_a_batch()
+            assert thread is not None
+            dest = folder / "批样1.csv"
+            assert _pump_until(lambda: dest.exists())
+        text = dest.read_text(encoding="utf-8-sig")
+        assert "s1.xy" in text and "s2.xy" in text
+        assert "60.00" in text
+        assert _pump_until(
+            lambda: w.tabs.a_panel.card_a.value("result.wr") == "60.00")
+    finally:
+        w.close()
+
+
+def test_run_task_b_batch_writes_csv_and_pngs(qapp, stub_core, tmp_path):
+    """B 法批量：CSV 按文件夹合并 + 每个成功文件一张同名 PNG + 画布显示首个。"""
+    from rutana.gui import batch as batchmod
+
+    folder = tmp_path / "pd"
+    folder.mkdir()
+    w = MainWindow()
+    try:
+        for name in ("18.xy", "36.xy"):
+            _add_pattern(w, str(folder / name))
+
+        def fake_batch(items, **kwargs):
+            out = []
+            for p, pat in items:
+                tt = np.asarray(pat.two_theta)
+                ycalc = np.asarray(pat.intensity) * 0.98
+                out.append({"path": p, "sample": Path(p).stem, "wa": 64.0,
+                            "wr": 36.0, "rwp": 9.42, "rp": 7.1, "chi2": 1.2,
+                            "ok": True, "message": "",
+                            "fit": {"two_theta": tt, "yobs": pat.intensity,
+                                    "ycalc": ycalc,
+                                    "diff": np.asarray(pat.intensity) - ycalc}})
+            return out
+
+        with mock.patch.object(batchmod, "run_method_b_batch", fake_batch):
+            thread = w.run_task_b_batch()
+            assert thread is not None
+            assert _pump_until(lambda: (folder / "pd.csv").exists(), timeout=8.0)
+            assert _pump_until(lambda: (folder / "18.png").exists(), timeout=8.0)
+        assert (folder / "36.png").exists(), "每个成功文件都要出 PNG"
+        text = (folder / "pd.csv").read_text(encoding="utf-8-sig")
+        assert tr("verdict.fit_good") in text
+        assert _pump_until(
+            lambda: w.tabs.b_panel.card_b.value("result.b_wr") == "36.00")
+        assert w.canvas._fit is not None, "画布应显示首个文件的精修谱"
+    finally:
+        w.close()
+
+
+def test_run_task_a_batch_requires_positive_k(qapp, stub_core, monkeypatch):
+    """K 未标定且当前 K 不为正时批量入口直接提示，不启动线程。"""
+    w = MainWindow()
+    try:
+        _add_pattern(w)
+        monkeypatch.setattr(w.tabs.a_panel, "current_k", lambda: 0.0)
+        assert w.run_task_a_batch() is None
     finally:
         w.close()
 

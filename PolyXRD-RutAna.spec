@@ -55,8 +55,13 @@ a = Analysis(
         "rutana.core.kalpha2",
         "rutana.gui.resources",
         "rutana.gui.services",
+        # v1.2.0 新增：批量服务层（GUI 静态 import rutana.gui.batch，
+        # 这里显式补全，保证 PyInstaller 静态分析可追踪）
+        "rutana.gui.batch",
         "rutana.gui.canvas",
         "rutana.gui.panels",
+        # v1.2.0：B 法面板拆出（同 ≤400 行约束）
+        "rutana.gui.panels_b",
         "rutana.gui.dialogs",
         "rutana.gui.report",
         "rutana.gui.exports",

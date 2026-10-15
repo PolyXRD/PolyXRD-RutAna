@@ -1,6 +1,7 @@
 """右侧「A 法 / B 法」选项卡容器。
 
-从 :mod:`rutana.gui.panels` 拆出（单文件 ≤400 行约束）；面板本体仍在 panels，
+两个面板本体分别在 :mod:`rutana.gui.panels`（A 法）与
+:mod:`rutana.gui.panels_b`（B 法，v1.2.0 按单文件 ≤400 行约束拆出）；
 本模块只做容器与语言热切换转发。
 """
 
@@ -8,7 +9,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QTabWidget, QWidget
 
-from rutana.gui.panels import APanel, BPanel
+from rutana.gui.panels import APanel
+from rutana.gui.panels_b import BPanel
 from rutana.i18n import tr
 
 

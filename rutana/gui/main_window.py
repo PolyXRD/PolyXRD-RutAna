@@ -45,6 +45,9 @@ from rutana.version import APP_NAME, __version__
 
 LANG_ORDER = ("zh_CN", "en_US", "ja_JP")
 
+#: 「添加文件夹…」用的谱图扩展名（与 filter.pattern 的口径一致）
+PATTERN_EXTS = (".xy", ".txt", ".dat", ".csv")
+
 
 class MainWindow(TaskMixin, ExportMixin, QMainWindow):
     """主窗口：导入 → 计算 → 出结果三击可达。
@@ -72,6 +75,8 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         """创建全部 QAction（文案在 retranslateUi 中统一设置）。"""
         self.act_open = QAction(self)
         self.act_open.triggered.connect(self._on_open)
+        self.act_add_folder = QAction(self)
+        self.act_add_folder.triggered.connect(self._on_add_folder)
         self.act_export_html = QAction(self)
         self.act_export_html.triggered.connect(self._on_export_html)
         self.act_export_csv = QAction(self)
@@ -101,6 +106,7 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         """组装三条菜单。"""
         self.menu_file = self.menuBar().addMenu("")
         self.menu_file.addAction(self.act_open)
+        self.menu_file.addAction(self.act_add_folder)
         self.menu_file.addSeparator()
         self.menu_file.addAction(self.act_export_html)
         self.menu_file.addAction(self.act_export_csv)
@@ -148,9 +154,11 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         # 右：A/B 法选项卡
         self.tabs = MethodTabs(self)
         self.tabs.a_panel.compute_requested.connect(self.run_task_a)
+        self.tabs.a_panel.batch_requested.connect(self.run_task_a_batch)
         self.tabs.a_panel.k_help_requested.connect(self.open_k_help)
         self.tabs.a_panel.k_wizard_requested.connect(self.open_k_wizard)
         self.tabs.b_panel.run_requested.connect(self.run_task_b)
+        self.tabs.b_panel.batch_requested.connect(self.run_task_b_batch)
         splitter.addWidget(self.tabs)
 
         splitter.setStretchFactor(0, 0)
@@ -179,6 +187,7 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self.menu_language.setTitle(tr("menu.language"))
         self.menu_help.setTitle(tr("menu.help"))
         self.act_open.setText(tr("menu.file.open"))
+        self.act_add_folder.setText(tr("menu.file.add_folder"))
         self.act_export_html.setText(tr("menu.file.export_html"))
         self.act_export_csv.setText(tr("menu.file.export_csv"))
         self.act_export_png.setText(tr("menu.file.export_png"))
@@ -203,6 +212,19 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         """打开谱图（可多选），经 services 读取，失败弹中文提示。"""
         paths, _ = QFileDialog.getOpenFileNames(
             self, tr("dlg.open_pattern"), "", tr("filter.pattern"))
+        self._import_paths(paths)
+
+    def _on_add_folder(self) -> None:
+        """添加文件夹：按扩展名批量导入该文件夹下的谱图（不含子目录）。"""
+        folder = QFileDialog.getExistingDirectory(self, tr("dlg.add_folder"), "")
+        if not folder:
+            return
+        paths = [str(p) for ext in PATTERN_EXTS
+                 for p in sorted(Path(folder).glob(f"*{ext}"))]
+        self._import_paths(paths)
+
+    def _import_paths(self, paths) -> None:
+        """逐个读取并登记谱图；单文件失败只提示、不中断其余。"""
         if not paths:
             return
         last_ok: str | None = None

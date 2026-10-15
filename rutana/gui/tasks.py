@@ -11,16 +11,20 @@
 所有 core 调用都在 :mod:`rutana.gui.workers` 的 QThread 内完成，
 前台由 :class:`rutana.gui.busy.BusyDialog` 显示阶段进度与已用时；
 core 抛错时忙窗关闭并由本模块给出中文提示（保留 CoreUnavailableError 语义）。
+v1.2.0 新增：A/B 两法的**批量**任务（见 :mod:`rutana.gui.batch`）。
+批量走同一套忙窗 + 后台线程；取消时**已完成文件的结果照常落盘**
+（batch 层在取消处 `break` 并原样返回已算行，不抛 TaskCanceled）。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable
 
 import numpy as np
 
-from rutana.gui import services
+from rutana.gui import batch, services
 from rutana.gui.exports import a_rows
 from rutana.gui.workers import run_busy_task
 from rutana.i18n import tr
@@ -94,6 +98,124 @@ class TaskMixin:
                         else tr("verdict.fail") if dup else tr("verdict.na")),
         }
 
+    def run_task_a_batch(self):
+        """A 法批量：对已导入的全部谱图逐个计算，结果按来源文件夹写 CSV。"""
+        items = self._batch_items()
+        if not items:
+            self._msg("msg.need_pattern")
+            return None
+        k = self.tabs.a_panel.current_k()
+        if not k or k <= 0:
+            self._msg("msg.need_k")
+            return None
+        params = self.tabs.a_panel.params()
+        return self._run_core_task(
+            self._batch_runner(batch.run_method_a_batch,
+                               items=items, win_a=params["win_a"],
+                               win_r=params["win_r"], k=k,
+                               quantity=self.tabs.a_panel.current_quantity()),
+            title=tr("busy.title_batch_a"),
+            cancellable=True,
+            degraded=not services.supports_progress("a"),
+            error_key="msg.batch_fail",
+            on_success=lambda data: self._finish_batch(data, "a"))
+
+    def _batch_items(self) -> list[tuple[str, object]]:
+        """批量输入：当前已导入的全部谱图（保持导入顺序）。"""
+        return list(self._patterns.items())
+
+    def _batch_runner(self, fn: Callable, **kwargs) -> Callable:
+        """把批量函数包成线程目标：顺带把「是否被取消」随结果一起回传。
+
+        :mod:`rutana.gui.workers` 会把 ``cancel_cb`` 注入**本闭包**（签名里有
+        这三个形参），因此跑完后直接问它就能知道用户是否点过取消——
+        取消时 batch 层返回的是**已完成部分**，照样要落盘。
+        """
+        def runner(*, progress_cb=None, on_iter=None, cancel_cb=None) -> dict:
+            extra = {"progress_cb": progress_cb, "cancel_cb": cancel_cb}
+            # A 法批量没有迭代回调，不支持就别传（core 能力探测沿用同款约定）
+            if on_iter is not None and services.supports_param(fn, "on_iter"):
+                extra["on_iter"] = on_iter
+            rows = fn(**kwargs, **extra)
+            return {"rows": rows, "canceled": bool(
+                callable(cancel_cb) and cancel_cb())}
+
+        return runner
+
+    def _finish_batch(self, data: dict, method: str) -> None:
+        """批量收尾：落盘 CSV（+ B 法逐文件 PNG）→ 回填结果卡/画布 → 弹汇总。
+
+        取消时 batch 层已把完成部分返回，因此这里照常落盘，只用
+        ``msg.batch_canceled`` 文案告知用户这是一份**部分结果**。
+        """
+        rows = list(data.get("rows") or [])
+        canceled = bool(data.get("canceled"))
+        if not rows:  # 开局即取消：一个文件都没算完，无结果可落盘
+            self._msg("msg.busy_canceled")
+            return
+        paths: list[str] = []
+        for dest, group in batch.batch_save_plan(rows):
+            paths.append(batch.export_batch_csv(group, dest, method=method))
+        ok_rows = [r for r in rows if r.get("ok")]
+        failed = len(rows) - len(ok_rows)
+        if ok_rows:
+            self._apply_batch_result(ok_rows[0], method)
+            if method == "b":
+                self._export_batch_pngs(ok_rows)
+        key = "msg.batch_canceled" if canceled else "msg.batch_done"
+        self._msg_box(tr(key, ok=len(ok_rows), fail=failed, paths="\n".join(paths)))
+
+    def _export_batch_pngs(self, rows: list[dict]) -> None:
+        """B 法批量：每个成功文件导出一张与数据同名的精修谱图 PNG。"""
+        for row in rows:
+            if not row.get("fit"):
+                continue
+            try:
+                batch.export_fit_png(row["fit"], batch.fit_png_path(row["path"]))
+            except Exception:  # noqa: BLE001 —— 单张图失败不影响整批结果
+                continue
+
+    def _apply_batch_result(self, row: dict, method: str) -> None:
+        """把批量首个成功结果回填到结果卡/画布（B 法同时画该文件的拟合谱）。"""
+        if method == "a":
+            self.tabs.a_panel.set_result_a(
+                SimpleNamespace(wa=row["wa"], wr=row["wr"], K=row["K"],
+                                ia=row["ia"], ir=row["ir"]),
+                None, self.tabs.a_panel.current_r2(),
+                self.tabs.a_panel.reference_value())
+            self._last_a = {
+                "sample": row["sample"], "file": row["path"],
+                "rows": [(tr("result.wa"), f"{row['wa']:.2f}"),
+                         (tr("result.wr"), f"{row['wr']:.2f}"),
+                         (tr("result.k"), f"{row['K']:.4f}"),
+                         (tr("result.ia"), f"{row['ia']:.1f}"),
+                         (tr("result.ir"), f"{row['ir']:.1f}")],
+                "verdict": tr("verdict.na"),
+            }
+            return
+        self.tabs.b_panel.set_rfactors(row["rwp"], row["rp"], row["chi2"])
+        self.tabs.b_panel.set_quantities(row["wa"], row["wr"])
+        fit = row.get("fit")
+        if fit:
+            self.canvas.show_fit(np.asarray(fit["two_theta"]),
+                                 np.asarray(fit["yobs"]),
+                                 np.asarray(fit["ycalc"]),
+                                 np.asarray(fit["diff"]))
+        good = row["rwp"] <= services.RWP_GOOD_LIMIT
+        verdict = tr("verdict.fit_good" if good else "verdict.fit_bad")
+        self._last_b = {
+            "sample": row["sample"], "file": row["path"],
+            "rows": [(tr("result.b_wa"),
+                      tr("verdict.na") if row["wa"] is None else f"{row['wa']:.2f}"),
+                     (tr("result.b_wr"),
+                      tr("verdict.na") if row["wr"] is None else f"{row['wr']:.2f}"),
+                     (tr("result.rwp"), f"{row['rwp']:.2f}"),
+                     (tr("result.rp"), f"{row['rp']:.2f}"),
+                     (tr("result.chi2"), f"{row['chi2']:.3f}"),
+                     (tr("result.fit_verdict"), verdict)],
+            "verdict": verdict,
+        }
+
     # ------------------------------------------------------------------ #
     # B 法
     # ------------------------------------------------------------------ #
@@ -143,6 +265,29 @@ class TaskMixin:
             ],
             "verdict": tr("verdict.fit_good" if rf.rwp <= 10.0 else "verdict.fit_bad"),
         }
+
+    def run_task_b_batch(self):
+        """B 法批量：对已导入的全部谱图逐个精修，CSV 按来源文件夹、PNG 逐文件。"""
+        items = self._batch_items()
+        if not items:
+            self._msg("msg.need_pattern")
+            return None
+        params = self.tabs.b_panel.params()
+        self.tabs.b_panel.set_busy(True)
+        thread = self._run_core_task(
+            self._batch_runner(
+                batch.run_method_b_batch, items=items,
+                refine_zero=params["refine_zero"], refine_uvw=params["refine_uvw"],
+                refine_eta=params["refine_eta"], n_bg=params["n_bg"],
+                extra_cifs=params["extra_cifs"]),
+            title=tr("busy.title_batch_b"),
+            cancellable=True,
+            degraded=not (services.supports_progress("b")
+                          or services.supports_iteration("b")),
+            error_key="msg.batch_fail",
+            on_success=lambda data: self._finish_batch(data, "b"))
+        self.tabs.b_panel.set_busy(False)
+        return thread
 
     # ------------------------------------------------------------------ #
     # K 标定（面板按钮 -> 向导）

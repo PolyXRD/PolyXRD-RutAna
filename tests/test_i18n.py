@@ -88,9 +88,9 @@ def test_placeholders_consistent():
             f"{key} 占位符在三语中不一致: {names}")
 
 
-def test_version_is_110():
-    """版本号已推进到 1.1.0（资源/文档/EXE 名统一取这里）。"""
-    assert __version__ == "1.1.0"
+def test_version_is_120():
+    """版本号已推进到 1.2.0（资源/文档/EXE 名统一取这里）。"""
+    assert __version__ == "1.2.0"
 
 
 def test_all_code_keys_defined_in_all_languages():

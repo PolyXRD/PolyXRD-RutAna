@@ -1,34 +1,28 @@
-"""A 法 / B 法参数与结果面板。
+"""A 法参数与结果面板（强度比值法）。
 
 面板只负责采集参数与展示结果，与 core 的交互一律经由上层调
-``rutana.gui.services`` 完成，再回填 ``set_result_a`` / ``set_rfactors``。
+``rutana.gui.services`` 完成，再回填 ``set_result_a``。
 所有文案经 i18n，``retranslate()`` 支持运行时热切换。
 
-v1.0.0 变更：
+v1.0.0：K 分组重做（手输 K + 「K 值说明」+「K 标定向导…」两个入口，K 来源在
+界面上明示）；结果卡给出 wa/wr + K + I(A)/I(R) + R² + 双平行差 + 合格判定，
+并提供可选「参考真值」输入 → 显示相对误差（便于用真实标样验证）。
+v1.2.0：新增「批量计算…」入口（与「计算比率」并排）。
 
-- A 法 K 分组重做：手输 K + 「K 值说明」+「K 标定向导…」两个入口，
-  K 来源（手输/标定）在界面上明示，避免用户不知道 K 是什么、该怎么设；
-- A 法结果卡：wa/wr + K + I(A)/I(R) + R² + 双平行差 + 合格判定，
-  并提供可选「参考真值」输入 → 显示相对误差（便于用真实标样验证）；
-- B 法结果卡：Rwp/Rp/χ² 且按 Rwp ≤ 10% 直接给绿/红判定。
-
-选项卡容器 :class:`rutana.gui.tabs.MethodTabs` 已拆到独立模块。
+B 法面板见 :mod:`rutana.gui.panels_b`（同一约束下拆出）；
+选项卡容器见 :mod:`rutana.gui.tabs.MethodTabs`。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -36,18 +30,11 @@ from PySide6.QtWidgets import (
 from rutana.gui.resultcard import ResultCard
 from rutana.i18n import tr
 
-#: 附加 CIF 路径存放在 QListWidgetItem 的 UserRole
-ROLE_CIF_PATH = Qt.UserRole + 1
-
 #: A 法结果卡行（顺序即显示顺序）
 A_RESULT_ROWS = (
     "result.wa", "result.wr", "result.k", "result.ia_ir", "result.r2",
     "result.dup", "result.verdict", "result.ref_err",
 )
-
-#: B 法结果卡行（定量结果在前，R 因子在后）
-B_RESULT_ROWS = ("result.b_wa", "result.b_wr",
-                 "result.rwp", "result.rp", "result.chi2", "result.fit_verdict")
 
 #: R² 告警阈值（低于此值提示线性不佳）
 R2_WARN_LIMIT = 0.995
@@ -57,6 +44,7 @@ class APanel(QWidget):
     """A 法（强度比值法）面板：双窗口、K 值、参考真值与结果卡。"""
 
     compute_requested = Signal()
+    batch_requested = Signal()
     k_help_requested = Signal()
     k_wizard_requested = Signal()
 
@@ -141,10 +129,16 @@ class APanel(QWidget):
         rv.addLayout(rh)
         root.addWidget(self.grp_ref)
 
-        # ---- 计算 ----
+        # ---- 计算（单文件 / 批量）----
+        hb = QHBoxLayout()
         self.btn_compute = QPushButton(self)
         self.btn_compute.clicked.connect(self.compute_requested.emit)
-        root.addWidget(self.btn_compute)
+        self.btn_batch = QPushButton(self)
+        self.btn_batch.setToolTip(tr("a.batch.tip"))
+        self.btn_batch.clicked.connect(self.batch_requested.emit)
+        hb.addWidget(self.btn_compute)
+        hb.addWidget(self.btn_batch)
+        root.addLayout(hb)
 
         # ---- 结果卡 ----
         self.card_a = ResultCard(A_RESULT_ROWS, self, title_key="a.result_group")
@@ -248,6 +242,8 @@ class APanel(QWidget):
         self.grp_ref.setTitle(tr("result.ref_label"))
         self.chk_ref.setText(tr("a.ref_enable"))
         self.btn_compute.setText(tr("a.compute"))
+        self.btn_batch.setText(tr("a.batch"))
+        self.btn_batch.setToolTip(tr("a.batch.tip"))
         self.card_a.retranslate()
         self._refresh_k_info()
 
@@ -273,140 +269,3 @@ class APanel(QWidget):
         rel = (wr - float(ref)) / float(ref) * 100.0
         self.card_a.set_value("result.ref_err", f"{rel:+.2f}",
                               "good" if abs(rel) <= 2.0 else "warn")
-
-
-class BPanel(QWidget):
-    """B 法（Rietveld 全谱拟合）面板：物相清单、精修开关、运行与 R 因子。"""
-
-    run_requested = Signal()
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        root = QVBoxLayout(self)
-
-        # ---- 物相清单（内置两相只读）----
-        self.grp_phases = QGroupBox(self)
-        pv = QVBoxLayout(self.grp_phases)
-        self.lst_phases = QListWidget(self.grp_phases)
-        for key in ("b.phases.anatase", "b.phases.rutile"):
-            item = QListWidgetItem(tr(key))
-            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            self.lst_phases.addItem(item)
-        pv.addWidget(self.lst_phases)
-        self.btn_add_cif = QPushButton(self.grp_phases)
-        self.btn_add_cif.clicked.connect(self._on_add_cif)
-        pv.addWidget(self.btn_add_cif)
-        root.addWidget(self.grp_phases)
-
-        # ---- 精修参数 ----
-        self.grp_refine = QGroupBox(self)
-        rv = QVBoxLayout(self.grp_refine)
-        self.chk_zero = QCheckBox(self.grp_refine)
-        self.chk_zero.setChecked(True)
-        self.chk_uvw = QCheckBox(self.grp_refine)
-        self.chk_uvw.setChecked(True)
-        self.chk_eta = QCheckBox(self.grp_refine)
-        # v1.0.0 实证：真实粉末谱上 eta 必须精修（固定 0.54 差 1.8pp，
-        # 见 docs/VALIDATION_v1.0.0.md §B.3），故默认勾选
-        self.chk_eta.setChecked(True)
-        for w in (self.chk_zero, self.chk_uvw, self.chk_eta):
-            rv.addWidget(w)
-        h = QHBoxLayout()
-        self.lbl_nbg = QLabel(self.grp_refine)
-        self.sp_nbg = QSpinBox(self.grp_refine)
-        self.sp_nbg.setRange(1, 8)
-        self.sp_nbg.setValue(3)
-        h.addWidget(self.lbl_nbg)
-        h.addWidget(self.sp_nbg)
-        h.addStretch(1)
-        rv.addLayout(h)
-        root.addWidget(self.grp_refine)
-
-        # ---- 运行 ----
-        self.btn_run = QPushButton(self)
-        self.btn_run.clicked.connect(self.run_requested.emit)
-        root.addWidget(self.btn_run)
-        self.lbl_busy = QLabel(tr("status.computing"), self)
-        self.lbl_busy.setStyleSheet("font-size:12px; color:#0284C7;")
-        self.lbl_busy.hide()
-        root.addWidget(self.lbl_busy)
-
-        # ---- R 因子结果卡 ----
-        self.card_b = ResultCard(B_RESULT_ROWS, self, title_key="b.rfactors")
-        root.addWidget(self.card_b)
-        root.addStretch(1)
-        self.retranslate()
-
-    # ------------------------------------------------------------------ #
-    # 数据交换
-    # ------------------------------------------------------------------ #
-    def params(self) -> dict:
-        """收集 B 法参数（含附加 CIF 路径）。"""
-        extra = []
-        for i in range(self.lst_phases.count()):
-            path = self.lst_phases.item(i).data(ROLE_CIF_PATH)
-            if path:
-                extra.append(str(path))
-        return {
-            "refine_zero": self.chk_zero.isChecked(),
-            "refine_uvw": self.chk_uvw.isChecked(),
-            "refine_eta": self.chk_eta.isChecked(),
-            "n_bg": self.sp_nbg.value(),
-            "extra_cifs": tuple(extra),
-        }
-
-    def set_busy(self, busy: bool) -> None:
-        """切换忙碌状态（忙窗为主，面板此处仅同步禁用运行按钮与提示行）。"""
-        self.lbl_busy.setVisible(busy)
-        self.btn_run.setEnabled(not busy)
-
-    def set_quantities(self, wa: float | None, wr: float | None) -> None:
-        """回填内置两相质量分数（定量失败时显示「—」）。"""
-        self.card_b.set_value("result.b_wa",
-                              f"{wa:.2f}" if wa is not None else tr("verdict.na"))
-        self.card_b.set_value("result.b_wr",
-                              f"{wr:.2f}" if wr is not None else tr("verdict.na"))
-
-    def set_rfactors(self, rwp: float, rp: float, chi2: float) -> None:
-        """回填 R 因子；Rwp ≤ 10% 判绿（拟合良好），否则判红。"""
-        self.card_b.set_value("result.rwp", f"{rwp:.2f}",
-                              "good" if rwp <= 10.0 else "bad")
-        self.card_b.set_value("result.rp", f"{rp:.2f}")
-        self.card_b.set_value("result.chi2", f"{chi2:.3f}")
-        key = "verdict.fit_good" if rwp <= 10.0 else "verdict.fit_bad"
-        self.card_b.set_value("result.fit_verdict", tr(key),
-                              "good" if rwp <= 10.0 else "bad")
-
-    def clear_rfactors(self) -> None:
-        """R 因子卡复位。"""
-        self.card_b.clear()
-
-    # ------------------------------------------------------------------ #
-    # 多语言
-    # ------------------------------------------------------------------ #
-    def retranslate(self) -> None:
-        self.grp_phases.setTitle(tr("b.phases"))
-        if self.lst_phases.count() >= 2:
-            self.lst_phases.item(0).setText(tr("b.phases.anatase"))
-            self.lst_phases.item(1).setText(tr("b.phases.rutile"))
-        self.btn_add_cif.setText(tr("b.add_cif"))
-        self.grp_refine.setTitle(tr("b.refine"))
-        self.chk_zero.setText(tr("b.refine.zero"))
-        self.chk_uvw.setText(tr("b.refine.uvw"))
-        self.chk_eta.setText(tr("b.refine.eta"))
-        self.lbl_nbg.setText(tr("b.n_bg") + "：")
-        self.btn_run.setText(tr("b.run"))
-        self.lbl_busy.setText(tr("status.computing"))
-        self.card_b.retranslate()
-
-    # ------------------------------------------------------------------ #
-    # 内部
-    # ------------------------------------------------------------------ #
-    def _on_add_cif(self) -> None:
-        """选择附加 CIF 并加入物相清单（只增不改内置两相）。"""
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, tr("b.add_cif"), "", "CIF (*.cif *.CIF);;* (*)")
-        for p in paths:
-            item = QListWidgetItem(p)
-            item.setData(ROLE_CIF_PATH, p)
-            self.lst_phases.addItem(item)
