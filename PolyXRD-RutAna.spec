@@ -83,8 +83,10 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
+    # v1.5.0：内部评估版 —— 运行时把版次覆写为 internal（状态栏显示
+    # 「内部评估版本」），并彻底排除注册模块（exe 不含注册机制）
+    runtime_hooks=["installer/rthook_internal.py"],
+    excludes=["rutana.gui.registration"],
     noarchive=False,
     optimize=0,
 )

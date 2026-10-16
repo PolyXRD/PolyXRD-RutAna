@@ -61,6 +61,9 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    # v1.5.0：注册版次在事件循环起来后做启动注册检查（未注册弹提示，
+    # 模态不阻塞窗口显示；offscreen/冒烟环境由注册模块自动跳过）
+    QTimer.singleShot(0, window.startup_registration)
     # 先撤 bootloader 启动图（下层），再按原时序收 QSplashScreen（上层），
     # 两层同图同位，视觉连续
     _close_boot_splash()

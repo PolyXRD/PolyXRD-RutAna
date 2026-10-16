@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rutana import edition
 from rutana.gui import services
 from rutana.gui.batch import is_tool_csv
 from rutana.gui.canvas import PatternCanvas
@@ -63,6 +64,14 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self._patterns: dict[str, object] = {}   # {路径: Pattern}，保持插入序
         self._last_a: dict | None = None         # 最近一次 A 法汇总
         self._last_b: dict | None = None         # 最近一次 B 法汇总
+        # v1.5.0 注册机制（registered 版次；internal 版次 _reg 恒为 None）
+        self._reg = None
+        self.act_regcode = None
+        if not edition.IS_INTERNAL:
+            from rutana.gui import registration  # 延迟导入：internal 版次不含该模块
+            registration.set_language(current_language().split("_")[0])
+            self._reg = registration.RegistrationManager(
+                APP_NAME, registration.default_state_path("PolyXRD-RutAna"))
         self._build_actions()
         self._build_menus()
         self._build_central()
@@ -122,6 +131,9 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self.menu_help = self.menuBar().addMenu("")
         self.menu_help.addAction(self.act_about)
         self.menu_help.addAction(self.act_copyright)
+        if not edition.IS_INTERNAL and self._reg is not None:
+            self._reg.add_help_action(self.menu_help, self)
+            self.act_regcode = self.menu_help.actions()[-1]
 
     def _build_central(self) -> None:
         """三栏布局：文件列表 | 画布 | 参数/结果选项卡。"""
@@ -172,11 +184,27 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
             self.setWindowIcon(QIcon(str(icon)))
 
     def _build_status(self) -> None:
-        """状态栏：左语言、右文件路径。"""
+        """状态栏：左语言/文件；右侧注册单位（registered）或版次（internal）。"""
         self.lbl_lang = QLabel(self)
         self.lbl_file = QLabel(self)
         self.statusBar().addWidget(self.lbl_lang, 0)
         self.statusBar().addWidget(self.lbl_file, 1)
+        if not edition.IS_INTERNAL and self._reg is not None:
+            # 注册标签：永久控件 + stretch=1，吃掉中间空白，名称贴右端；
+            # 必须在其它 addWidget 之后调用，才能排在最右侧
+            self._reg.attach_status_label(self.statusBar(), self)
+        else:
+            self.lbl_edition = QLabel(self)
+            self.statusBar().addPermanentWidget(self.lbl_edition, 1)
+
+    def startup_registration(self) -> None:
+        """启动注册检查（registered 版次）：未注册弹提示，已注册静默。
+
+        由 ``__main__`` 在 ``window.show()`` 后经 ``QTimer.singleShot`` 调度，
+        模态提示在事件循环起来后出现；internal 版次无操作。
+        """
+        if self._reg is not None:
+            self._reg.startup_check(self)
 
     # ------------------------------------------------------------------ #
     # 多语言
@@ -205,6 +233,8 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self.tabs.retranslate()
         self.canvas.retranslate()
         self.lbl_lang.setText(tr("status.lang", lang=tr(f"lang.{current_language()}")))
+        if getattr(self, "lbl_edition", None) is not None:
+            self.lbl_edition.setText(tr("status.internal_edition"))
 
     # ------------------------------------------------------------------ #
     # 槽：文件
@@ -310,6 +340,12 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         set_language(code)
         save_language(code)
         self.retranslateUi()
+        if not edition.IS_INTERNAL and self._reg is not None:
+            from rutana.gui import registration  # 延迟导入：internal 版次不含该模块
+            registration.set_language(code.split("_")[0])
+            if self.act_regcode is not None:
+                self.act_regcode.setText(registration.tr("输入注册码 (&R)…"))
+            self._reg.refresh()
 
     def _on_about(self) -> None:
         AboutDialog(self).exec()

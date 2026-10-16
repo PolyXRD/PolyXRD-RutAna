@@ -120,6 +120,7 @@ TRANSLATIONS: dict[str, str] = {
     "status.ready": "就绪",
     "status.file": "当前文件：{path}",
     "status.lang": "语言：{lang}",
+    "status.internal_edition": "内部评估版本",
     # ---- HTML 报告 ----
     "report.title": "锐钛型/金红石型比率测定报告",
     "report.sample": "样品",

@@ -53,6 +53,30 @@ D:/Project/XRD/python310/python.exe -m rutana.cli.rutana a-method \
 D:/Project/XRD/python310/python.exe -m rutana.gui
 ```
 
+## 版次与注册（v1.5.0）
+
+RutAna 有两个版次，构建期定版（`rutana/edition.py`），运行期只读：
+
+| | 注册版（Setup 安装包） | 内部评估版（单文件 exe） |
+|---|---|---|
+| 产物 | `PolyXRD-RutAna-vX.Y.Z-Setup.exe` | `PolyXRD-RutAna-vX.Y.Z.exe` |
+| 注册机制 | ✅（含 `rutana.gui.registration`） | ❌（spec excludes 彻底排除） |
+| 未注册启动 | 每次弹窗：「本软件未注册，版权所有，禁止用于商业用途。如需注册请联系 sshztx@outlook.com」，点「确定」后可正常继续使用，点「输入注册码」注册后不再提示 | — |
+| 帮助菜单 | 含「输入注册码 (&R)…」 | 无注册项 |
+| 状态栏最右 | 已注册：显示注册的「单位部门名称」；未注册：显示「未注册」 | 显示「内部评估版本」 |
+
+- **注册码**：由开发方根据用户提供的「单位部门名称」生成（离线 HMAC-SHA256，
+  与 PolyXRD 家族出码工具互通）。**如需注册请联系 sshztx@outlook.com**，
+  告知单位部门名称即可获取注册码；拿到后在软件内「帮助 → 输入注册码」粘贴。
+- **开发方出码**：用 PolyXRD-Reg 的 `dist\PolyXRD-RegTool.exe`（界面版）
+  或 `make_reg_code.py`（命令行），详见 `D:\Project\XRD\PolyXRD-Reg\README.md`。
+- **注册状态文件**：`%APPDATA%\PolyXRD\Registration\PolyXRD_RutAna.json`；
+  每次启动重新校验注册码，手改 JSON 伪造「已注册」无效；卸载软件不删除
+  该文件，重装后注册仍在。
+- 构建：内部评估版 `build_exe.bat`；注册版 `build_setup.bat`
+  （PyInstaller onedir + Inno Setup 安装包，可指定安装位置、开始菜单/桌面
+  快捷方式、可卸载）。GitHub Release 提供 Setup 安装版。
+
 ## 怎么跑 pytest
 
 ```bash

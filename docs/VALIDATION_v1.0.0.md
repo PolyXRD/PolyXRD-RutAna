@@ -407,3 +407,73 @@ rutile r=1，已知 scale、泊松低噪声、tent 背景、integrated=True）�
 - 强织构样（真实 r=0.25）回收值落在 PO_BOUNDS 内且偏向真值一侧；
 - refine_po=False 时 result.po_r is None 且 ycalc 与基线逐位一致；
 - 性能护栏：开 PO 的单样本耗时 ≤ 关闭版 3 倍（实测接近 1.x 倍）。
+
+## v1.5.0 · 注册机制与双版次
+
+> 实施日期 2026-10-16。注册机制逐字节复用 PolyXRD-Reg（家族统一注册机制 +
+> 出码工具互通）；双版次：注册版（Setup 安装包，含注册）与内部评估版
+> （单文件 exe，不含注册）。版本号 1.4.0 → 1.5.0。
+
+### 注册机制（rutana/gui/registration.py）
+
+- **逐字节一致**：`PolyXRD-Reg/registration.py` 原样复制（`cmp` 校验
+  前 N 字节逐字节相同），仅在文件尾追加来源注释行；密钥/算法/文案与
+  家族注册机（`PolyXRD-RegTool.exe` / `make_reg_code.py`）互通。
+- **跨仓库一致性测试**（tests/test_registration.py::test_cross_repo_registration_identity）：
+  sys.path 临时挂载 PolyXRD-Reg 源头，断言 `_SECRET_KEY`、`CODE_PREFIX`
+  相同，三组单位名（中/英）`generate_code` 输出逐字节相同且互相可校验。
+
+### 测试（tests/，v1.4.0 基线 222 passed + 1 skipped 只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest tests/` | **236 项：235 passed + 1 skipped**（净增 13） |
+| tests/test_registration.py（新增） | 10 项全绿：roundtrip / 前缀·全角连字符·大小写·空白容错 / 篡改·拼凑·非法输入一律 None / 非法单位名抛 ValueError / 状态文件往返 / 手改 JSON 失效 / 缺失·损坏状态文件按未注册 / 无效码不落盘 / default_state_path 形状 / 跨仓库一致性 |
+| tests/test_gui_smoke.py（增补 3 项） | internal：`_reg is None`、状态栏「内部评估版本」、帮助菜单无注册项；registered 未注册：菜单含「输入注册码 (&R)…」、状态栏「未注册」、`startup_registration()` 不炸、切英文后菜单/标签随 registration.set_language 刷新；registered 已注册：状态栏「已注册：测试单位甲」。状态路径与语言配置均 monkeypatch 到 tmp，不污染真实 %APPDATA% 与 ~/.rutana |
+| tests/test_i18n.py | 三语各 223 键，键集/占位符/非空全对齐（`status.internal_edition` 三语齐备）；键扫描对家族原样模块 registration.py 豁免（其内置 tr() 为独立文案体系） |
+| tools/bench_b.py | **ALL PASS**（8 配比 round-trip，本版不碰 core，回归确认） |
+
+### 构建产物（实际构建 + 佐证）
+
+| 产物 | 大小 | 版次佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.5.0.exe`（内部评估版 onefile，附固定名副本 `PolyXRD-RutAna.exe`） | 102.7 MB | PYZ 模块 TOC 共 1641 项：含 `rutana.edition`、**不含** `rutana.gui.registration`（excludes 生效）；CArchive 顶层 TOC 含 `installer/rthook_internal.py`（runtime_hook 生效，运行期版次=internal） |
+| `dist/PolyXRD-RutAna/`（注册版 onedir，安装包载荷） | 251 MB | PYZ 1642 项：含 `rutana.gui.registration` 与 `rutana.edition`；无 runtime_hook（registered 默认版次） |
+| `dist/PolyXRD-RutAna-v1.5.0-Setup.exe`（Inno Setup 6 安装包） | 66.9 MB | 由 `installer/PolyXRD-RutAna.iss` 编译（lzma2/max + Solid），Payload 即上述 onedir；AppId=PolyXRD-RutAna，开始菜单/可选桌面快捷方式、可卸载；注册状态存 %APPDATA%，卸载不动 |
+
+构建链：`build_exe.bat`（内部版）与 `build_setup.bat`（PyInstaller onedir →
+ISCC /DAPP_VER=v%VER%，版本号从 rutana/version.py 动态读取）。
+两版 spec 均保留 v1.4.0 的 bootloader Splash 配置（onefile 传 splash.binaries
+入 EXE；onedir 按 PyInstaller 6 模板 splash 入 EXE、splash.binaries 入 COLLECT）。
+
+### 启动行为实机验证（桌面截屏证据，docs/evidence/）
+
+- `11_desktop_popup.png`：**Setup 版（注册版）未注册启动** —— 弹窗
+  「本软件未注册，版权所有，禁止用于商业用途。/ 如需注册请联系
+  sshztx@outlook.com」，按钮 [确定] [输入注册码]；主窗口状态栏右下角
+  显示「未注册」；点「确定」后软件正常使用。
+- `13_desktop_registered.png`：**注册成功后**（预置状态文件后启动，截图后
+  已删除恢复现场）—— 无弹窗，状态栏最右侧显示「已注册：清华大学材料学院」。
+- `12_desktop_internal.png`：**内部评估版启动** —— 无任何弹窗、帮助菜单
+  仅关于/版权（无注册项），状态栏右下角显示「内部评估版本」。
+- offscreen 布局证据（08/09/10）与既有证据集一致（offscreen 无 CJK 字体
+  渲染为方块，属已知环境局限，版面结构可核）。
+
+### Inno Setup 界面语言结论
+
+Inno 6 官方（含 Unofficial 目录）**已不提供简体中文语言包**（2026-10-16
+核实，`Files/Languages/Unofficial/` 列表无中文）。采用社区维护版
+Zhenghan Yang (kira-96) 翻译的 `ChineseSimplified.isl`（6.1.0+ 兼容，
+存 `installer/Languages/`），安装向导默认简体中文、备选英文；编译仅
+3 条无害 Warning（VerificationKey 等新消息缺失时回退英文）。
+
+### 状态文件与行为约定
+
+- 注册状态：`%APPDATA%/PolyXRD/Registration/PolyXRD_RutAna.json`
+  （`registration.default_state_path("PolyXRD-RutAna")`）；
+- 每次启动 `startup_registration()` → `load_state` 重新校验注册码
+  （HMAC），手改 JSON 无效——「每次打开软件检查」即由此实现；
+- 卸载不删状态文件，重装后注册仍在；
+- 出码：开发方用 `PolyXRD-Reg/dist/PolyXRD-RegTool.exe` 或
+  `make_reg_code.py`（本轮以 `make_reg_code.py "清华大学材料学院"`
+  出码在 RutAna 侧 verify 通过并还原同名，见跨仓库一致性测试）。

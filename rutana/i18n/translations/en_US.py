@@ -120,6 +120,7 @@ TRANSLATIONS: dict[str, str] = {
     "status.ready": "Ready",
     "status.file": "Current file: {path}",
     "status.lang": "Language: {lang}",
+    "status.internal_edition": "Internal Evaluation Build",
     # ---- HTML report ----
     "report.title": "Anatase/Rutile Ratio Determination Report",
     "report.sample": "Sample",

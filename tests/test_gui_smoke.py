@@ -282,9 +282,87 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_140():
-    """版本号已推进到 1.4.0（UI 版本号与 EXE 名同源）。"""
-    assert __version__ == "1.4.0"
+def test_version_is_150():
+    """版本号已推进到 1.5.0（UI 版本号与 EXE/安装包名同源）。"""
+    assert __version__ == "1.5.0"
+
+
+# --------------------------------------------------------------------------- #
+# v1.5.0：版次（internal / registered）与注册机制
+# --------------------------------------------------------------------------- #
+def _reg_status_labels(win: MainWindow) -> list[QLabel]:
+    """状态栏里的注册标签（registration.make_status_label 的 objectName）。"""
+    return [l for l in win.statusBar().findChildren(QLabel)
+            if l.objectName() == "regStatusLabel"]
+
+
+def test_internal_edition_has_no_registration(qapp, stub_core, monkeypatch, tmp_path):
+    """internal 版次：状态栏显示「内部评估版本」，帮助菜单无注册项。"""
+    monkeypatch.setattr("rutana.edition.IS_INTERNAL", True)
+    from rutana.i18n import i18n_manager
+    monkeypatch.setattr(i18n_manager, "CONFIG_PATH", tmp_path / "config.json")
+    set_language("zh_CN")
+    w = MainWindow()
+    try:
+        assert w._reg is None, "internal 版次不应创建注册管理器"
+        assert w.lbl_edition.text() == tr("status.internal_edition")
+        assert w.lbl_edition.text() == "内部评估版本"
+        texts = [a.text() for a in w.menu_help.actions()]
+        assert all("注册" not in t for t in texts), f"帮助菜单不应含注册项: {texts}"
+    finally:
+        w.close()
+
+
+def test_registered_edition_unregistered(qapp, stub_core, monkeypatch, tmp_path):
+    """registered 版次未注册：帮助菜单含「输入注册码」、状态栏右侧「未注册」。
+
+    状态路径 monkeypatch 到 tmp，避免读写真实 %APPDATA%。
+    """
+    monkeypatch.setattr("rutana.edition.IS_INTERNAL", False)
+    monkeypatch.setattr(
+        "rutana.gui.registration.default_state_path",
+        lambda app_id: tmp_path / "reg.json")
+    # _on_language 会 save_language 持久化——把配置路径引到 tmp，勿污染真实配置
+    from rutana.i18n import i18n_manager
+    monkeypatch.setattr(i18n_manager, "CONFIG_PATH", tmp_path / "config.json")
+    set_language("zh_CN")
+    w = MainWindow()
+    try:
+        assert w._reg is not None and w.act_regcode is not None
+        assert w.act_regcode.text() == "输入注册码 (&R)…"
+        labels = _reg_status_labels(w)
+        assert labels and labels[0].text() == "未注册"
+        # 启动注册检查：未注册 + 无状态文件时不炸（offscreen 自动跳过弹窗）
+        w.startup_registration()
+        # 语言热切换：注册 UI 文案（菜单/状态栏）随语言刷新
+        w._on_language("en_US")
+        assert w.act_regcode.text() == "Enter Registration &Code…"
+        assert _reg_status_labels(w)[0].text() == "Unregistered"
+    finally:
+        set_language("zh_CN")
+        w.close()
+
+
+def test_registered_edition_registered_shows_unit(qapp, stub_core, monkeypatch, tmp_path):
+    """registered 版次已注册：状态栏右侧显示「已注册：<单位部门名称>」。"""
+    from rutana.gui import registration
+
+    monkeypatch.setattr("rutana.edition.IS_INTERNAL", False)
+    state_path = tmp_path / "reg.json"
+    monkeypatch.setattr(
+        "rutana.gui.registration.default_state_path",
+        lambda app_id: state_path)
+    registration.save_state(state_path, registration.generate_code("测试单位甲"))
+    from rutana.i18n import i18n_manager
+    monkeypatch.setattr(i18n_manager, "CONFIG_PATH", tmp_path / "config.json")
+    set_language("zh_CN")
+    w = MainWindow()
+    try:
+        labels = _reg_status_labels(w)
+        assert labels and labels[0].text() == "已注册：测试单位甲"
+    finally:
+        set_language("zh_CN")
+        w.close()
 
 
 # --------------------------------------------------------------------------- #
