@@ -44,13 +44,24 @@ def compute_peaks(struct: CifStructure,
                   wavelength: float = 1.5406,
                   two_min: float = DEFAULT_TWO_MIN,
                   two_max: float = DEFAULT_TWO_MAX,
-                  po=None, wavelengths=None):
-    """返回 (list[(two_theta, |F|²·LP, d)], skipped_elements)。
+                  po=None, wavelengths=None,
+                  po_detail: bool = False):
+    """返回 (list[(two_theta, |F|²·LP, d)], skipped_elements)；
+    ``po_detail=True`` 时返回 ``(peaks, skipped, detail)``。
 
     wavelengths: resolve_wavelengths() 的结果。None -> 单色光。
     po: (h, k, l, r) 择优取向 —— (hkl) 为择优面法向, r 为 March–Dollase 参数。
     完整倒易点枚举 -> 强度求和即自动包含多重性。
+    po_detail: True 时额外返回与 peaks 逐项对齐的贡献明细
+        ``detail[i] = [(val_pre_po, cos_alpha), ...]``，其中 val_pre_po 为
+        未乘 PO 权重的 |F|²·LP·wgt，cos_alpha 为该 hkl 与择优面法向的夹角
+        余弦。精修可据此在任意 r 下廉价重算峰强（前向施加 PO，无需重算峰
+        列表，数值与直接传 po=(h,k,l,r) 完全一致）。po_detail=True 时
+        po 不能为 None（否则抛 ValueError）；po_detail=False 时行为与
+        既往版本逐位一致。
     """
+    if po_detail and po is None:
+        raise ValueError("po_detail=True 时 po 不能为 None")
     a, b, c, al, be, ga = struct.cell
     ast, bst, cst = reciprocal_basis(a, b, c, al, be, ga)
 
@@ -108,6 +119,7 @@ def compute_peaks(struct: CifStructure,
         po_neutral = abs(po_r - 1.0) < 1e-12
 
     peaks: dict[int, list] = {}
+    detail: dict[int, list] = {}
     for h in range(-H, H + 1):
         for k in range(-H, H + 1):
             for l in range(-H, H + 1):
@@ -127,13 +139,16 @@ def compute_peaks(struct: CifStructure,
                 i_hkl = (F.real ** 2 + F.imag ** 2)
                 if i_hkl <= tol_i:
                     continue
-                # 择优取向权重 (r=1 时严格为 1.0)
+                # 择优取向权重 (r=1 时严格为 1.0)；po_detail 时即使 r=1 也
+                # 记录 cos_alpha，保证明细可在任意 r 下复用（前向施加 PO）
                 wpo = 1.0
-                if po_vec is not None and not po_neutral:
+                ca = 0.0
+                if po_vec is not None and (not po_neutral or po_detail):
                     ca = float(rlv @ po_vec) / g
-                    wpo = march_dollase_weight(ca, po_r)
-                    if wpo <= 0:
-                        continue
+                    if not po_neutral:
+                        wpo = march_dollase_weight(ca, po_r)
+                        if wpo <= 0:
+                            continue
                 # Kα 双线: 每条分量各自满足 Bragg 关系 -> 各自一个衍射角
                 for wl, wgt in comps:
                     s_arg = wl * g / 2
@@ -144,7 +159,8 @@ def compute_peaks(struct: CifStructure,
                     if two_theta < two_min - 1e-9 or two_theta > two_max + 1e-9:
                         continue
                     lp = (1 + math.cos(2 * theta) ** 2) / (math.sin(theta) ** 2 * math.cos(theta))
-                    val = i_hkl * lp * wgt * wpo
+                    val0 = i_hkl * lp * wgt
+                    val = val0 * wpo
                     if val <= 0:
                         continue
                     key = round(two_theta / TWO_THETA_TOL)
@@ -152,11 +168,17 @@ def compute_peaks(struct: CifStructure,
                         peaks[key][0] += val
                     else:
                         peaks[key] = [val, two_theta, 1.0 / g]
+                    if po_detail:
+                        detail.setdefault(key, []).append((val0, ca))
 
-    out = []
-    for v in peaks.values():
+    combined = []
+    for key, v in peaks.items():
         if v[0] <= 0:
             continue
-        out.append((v[1], v[0], v[2]))
-    out.sort(key=lambda t: t[0])
-    return out, skipped
+        combined.append((v[1], v[0], v[2],
+                         detail.get(key, []) if po_detail else None))
+    combined.sort(key=lambda t: t[0])
+    if po_detail:
+        return ([(p, i, d) for p, i, d, _det in combined], skipped,
+                [det for _p, _i, _d, det in combined])
+    return [(p, i, d) for p, i, d, _det in combined], skipped

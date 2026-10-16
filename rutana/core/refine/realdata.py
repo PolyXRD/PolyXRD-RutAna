@@ -13,8 +13,14 @@ v1.0.0 后期决定性修复：Caglioti 角度口径改为 tanθ（forward.cagli
 Rwp 进一步 10.97% → 9.31–9.75%，定量最差相对误差 3.61% → 2.62%，
 实证与决策记录见 docs/VALIDATION_v1.0.0.md §B。
 
-合成数据基准（bench_b / 黄金基线）继续用默认配置（cheb + 无扩展项），
-保证虚拟实验室回归基线不漂移；两套口径的差异记录在 VALIDATION 文档。
+v1.4.0：新增 refine_po=True（March–Dollase 择优取向 r 精修）。四样实证
+Rwp 不劣化（最大 +0.00pp）、定量最差相对误差 2.85%（≤3% 判据），精修出的
+r≈1.005–1.017 表明该数据集无明显择优取向——开关注释成本为零，默认开启；
+对照表见 docs/VALIDATION_v1.0.0.md §v1.4.0，实验脚本 tools/diag_po.py。
+
+合成数据基准（bench_b / 黄金基线）继续用默认配置（cheb + 无扩展项，
+refine_po=False），保证虚拟实验室回归基线不漂移；两套口径的差异记录在
+VALIDATION 文档。
 """
 from __future__ import annotations
 
@@ -40,6 +46,10 @@ REAL_PROFILE_PARAMS = ProfileParams(
 # 真实粉末谱推荐精修配置（tent 背景 80 节点 + eta/asym/bfactor/晶胞精修）
 # 注意：eta 必须释放（实测收敛 ~0.68，固定 0.54 会差 1.8pp）；V 允许为负
 # （实测 -0.04）—— 二者需同时满足，缺一不可，实证见 docs/VALIDATION_v1.0.0.md。
+# v1.4.0：refine_po=True（March–Dollase 择优取向 r 精修，四样实证 Rwp 不
+# 劣化、定量最差相对误差 2.85% ≤3%，精修出的 r≈1.005–1.017 表明该数据集
+# 无明显择优取向；开关注释成本为零，默认开，见 docs/VALIDATION_v1.0.0.md
+# §v1.4.0 与 tools/diag_po.py）。
 REAL_REFINE_CONFIG = RefineConfig(
     refine_zero=True,
     refine_uvw=True,
@@ -49,6 +59,7 @@ REAL_REFINE_CONFIG = RefineConfig(
     refine_asym=True,
     refine_bfactor=True,
     refine_cell=True,
+    refine_po=True,
     tmin=18.0,
     tmax=122.0,
     max_iter=60,

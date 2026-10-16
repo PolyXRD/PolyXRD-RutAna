@@ -32,7 +32,12 @@ ROLE_CIF_PATH = Qt.UserRole + 1
 
 #: B 法结果卡行（定量结果在前，R 因子在后）
 B_RESULT_ROWS = ("result.b_wa", "result.b_wr",
-                 "result.rwp", "result.rp", "result.chi2", "result.fit_verdict")
+                 "result.rwp", "result.rp", "result.chi2", "result.fit_verdict",
+                 "result.b_po")
+
+#: 「择优取向修正」复选框默认态（v1.4.0 真实数据实证后设定，
+#: 见 docs/VALIDATION_v1.0.0.md §v1.4.0：preset 默认开 -> 勾选）
+PO_CHECK_DEFAULT = True
 
 
 class BPanel(QWidget):
@@ -70,7 +75,11 @@ class BPanel(QWidget):
         # v1.0.0 实证：真实粉末谱上 eta 必须精修（固定 0.54 差 1.8pp，
         # 见 docs/VALIDATION_v1.0.0.md §B.3），故默认勾选
         self.chk_eta.setChecked(True)
-        for w in (self.chk_zero, self.chk_uvw, self.chk_eta):
+        # v1.4.0：择优取向（March–Dollase）修正；真实数据实证不劣化定量
+        # （见 docs/VALIDATION_v1.0.0.md §v1.4.0），随 preset 默认勾选
+        self.chk_po = QCheckBox(self.grp_refine)
+        self.chk_po.setChecked(PO_CHECK_DEFAULT)
+        for w in (self.chk_zero, self.chk_uvw, self.chk_eta, self.chk_po):
             rv.addWidget(w)
         h = QHBoxLayout()
         self.lbl_nbg = QLabel(self.grp_refine)
@@ -118,6 +127,7 @@ class BPanel(QWidget):
             "refine_zero": self.chk_zero.isChecked(),
             "refine_uvw": self.chk_uvw.isChecked(),
             "refine_eta": self.chk_eta.isChecked(),
+            "refine_po": self.chk_po.isChecked(),
             "n_bg": self.sp_nbg.value(),
             "extra_cifs": tuple(extra),
         }
@@ -145,6 +155,13 @@ class BPanel(QWidget):
         self.card_b.set_value("result.fit_verdict", tr(key),
                               "good" if rwp <= 10.0 else "bad")
 
+    def set_po(self, ra: float | None, rr: float | None) -> None:
+        """回填择优取向 r（锐钛/金红石）；缺失（未精修或无结果）显示「—」。"""
+        if ra is None or rr is None:
+            self.card_b.set_value("result.b_po", tr("verdict.na"))
+            return
+        self.card_b.set_value("result.b_po", f"{ra:.2f} / {rr:.2f}")
+
     def clear_rfactors(self) -> None:
         """R 因子卡复位。"""
         self.card_b.clear()
@@ -162,6 +179,8 @@ class BPanel(QWidget):
         self.chk_zero.setText(tr("b.refine.zero"))
         self.chk_uvw.setText(tr("b.refine.uvw"))
         self.chk_eta.setText(tr("b.refine.eta"))
+        self.chk_po.setText(tr("b.refine.po"))
+        self.chk_po.setToolTip(tr("b.refine.po.tip"))
         self.lbl_nbg.setText(tr("b.n_bg") + "：")
         self.btn_run.setText(tr("b.run"))
         self.btn_batch.setText(tr("b.batch"))

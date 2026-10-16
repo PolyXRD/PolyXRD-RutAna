@@ -9,6 +9,12 @@ v1.0.0 扩展（真实数据调优成果，见 docs/VALIDATION_v1.0.0.md）：
 - refine_cell：每相晶胞 a,c 缩放（±1%，T4.7 内容）
 - progress_cb(msg, pct) / on_iter(gen, rwp)：GUI 忙窗回调（默认 None）
 
+v1.4.0 扩展（择优取向精修，见 docs/VALIDATION_v1.0.0.md §v1.4.0 实证）：
+- refine_po：March–Dollase 择优取向参数 r 精修（每相一个 r，边界
+  PO_BOUNDS=(0.2, 5.0)；缺相按 DEFAULT_PO_HKL 补 (h,k,l,1.0) 起点）。
+  峰强经 forward 的明细路径前向施加（缓存键不含 r，每次评估 O(峰数)），
+  单样本耗时不劣化超过关闭版的 ~1.x 倍。
+
 residual_fn(x):
   x -> 重建 ProfileParams(+每相晶胞) -> compute_phase_profile 各相
   -> solve_linear 解析出 scale+背景 -> 返回加权残差 (y_obs − y_calc)/σ。
@@ -17,7 +23,7 @@ history 记录每次残差评估的 Rwp（含被拒绝的试探，画收敛曲�
 from __future__ import annotations
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from rutana.core.dtypes import Pattern
 from rutana.core.profile.cif import CifStructure
@@ -38,6 +44,11 @@ ETA_BOUNDS = (0.05, 1.0)
 ASYM_BOUNDS = (-0.05, 0.30)
 BFACTOR_BOUNDS = (0.0, 6.0)
 CELL_BOUNDS = (0.99, 1.01)          # 晶胞 a,c 缩放 ±1%
+# v1.4.0: March–Dollase 择优取向参数 r 边界（r=1 为无择优）
+PO_BOUNDS = (0.2, 5.0)
+# v1.4.0: 已知惯习面的内置相择优取向默认 (h,k,l)（TiO2 惯习：锐钛板状
+# (001)、金红石柱状 (110)）；未知相名不纳入 PO 精修。
+DEFAULT_PO_HKL = {"anatase": (0, 0, 1), "rutile": (1, 1, 0)}
 
 
 @dataclass(frozen=True)
@@ -60,13 +71,17 @@ class RefineConfig:
     backend: str = "lm"              # "lm"（自研，默认）| "scipy"（trf，真实数据推荐）
     progress_cb: object = None       # callable(msg: str, pct: float | None)
     on_iter: object = None           # callable(gen: int, rwp: float)
+    # ---- v1.4.0 扩展 ----
+    refine_po: bool = False          # March–Dollase 择优取向 r 精修（默认关）
 
 
 @dataclass(frozen=True)
 class RefineResult:
     """精修结果。phase_dropped 为被线性层剔除（scale=0）的相下标；
     restarted=True 表示角点陷阱检测触发过重启链（至少跑过一个重启起点）；
-    cell_scales 为每相 (fa, fc) 晶胞缩放（refine_cell=False 时全为 1.0）。"""
+    cell_scales 为每相 (fa, fc) 晶胞缩放（refine_cell=False 时全为 1.0）；
+    po_r 为精修后的每相 March–Dollase 参数 {phase: (h,k,l,r)}
+    （refine_po=False 或未精修时为 None）。"""
 
     params: ProfileParams
     scales: np.ndarray
@@ -79,10 +94,15 @@ class RefineResult:
     restarted: bool = False
     cell_scales: list[tuple[float, float]] = field(default_factory=list)
     iters: int = 0
+    po_r: dict | None = None
 
 
 def _pack(prm: ProfileParams, cfg: RefineConfig, n_phase: int) -> np.ndarray:
-    """按 cfg 开关把非线性参数打包成 LM 向量。"""
+    """按 cfg 开关把非线性参数打包成 LM 向量。
+
+    v1.4.0：refine_po 且 prm.po_r 非空时，按 sorted(prm.po_r) 顺序把每相
+    的 March–Dollase r 追加到向量**末尾**（cell 参数之后）。
+    """
     x: list[float] = []
     if cfg.refine_zero:
         x.append(prm.zero)
@@ -98,12 +118,19 @@ def _pack(prm: ProfileParams, cfg: RefineConfig, n_phase: int) -> np.ndarray:
         cs = getattr(prm, "_cell_scales", None) or [(1.0, 1.0)] * n_phase
         for fa, fc in cs:
             x.extend([fa, fc])
+    if cfg.refine_po and prm.po_r:
+        for name in sorted(prm.po_r):
+            x.append(float(prm.po_r[name][3]))
     return np.array(x, dtype=np.float64) if x else np.zeros(0)
 
 
 def _unpack(x: np.ndarray, base: ProfileParams, cfg: RefineConfig,
             n_phase: int) -> tuple[ProfileParams, list[tuple[float, float]]]:
-    """由 LM 向量重建 (ProfileParams, 每相晶胞缩放)。未精修字段取 base 值。"""
+    """由 LM 向量重建 (ProfileParams, 每相晶胞缩放)。未精修字段取 base 值。
+
+    v1.4.0：PO 参数按 sorted(base.po_r) 同序重建（hkl 取 base 值、r 取 x），
+    与 _pack/_bounds 三方顺序严格一致。
+    """
     i = 0
     zero, U, V, W, eta = base.zero, base.U, base.V, base.W, base.eta
     asym, bfactor = base.asym, base.bfactor
@@ -121,15 +148,22 @@ def _unpack(x: np.ndarray, base: ProfileParams, cfg: RefineConfig,
     if cfg.refine_cell:
         for j in range(n_phase):
             cell[j] = (float(x[i]), float(x[i + 1])); i += 2
+    po_r = base.po_r
+    if cfg.refine_po and base.po_r:
+        po_r = {}
+        for name in sorted(base.po_r):
+            entry = base.po_r[name]
+            po_r[name] = (entry[0], entry[1], entry[2], float(x[i])); i += 1
     prm = ProfileParams(zero=zero, U=U, V=V, W=max(W, MIN_W), eta=eta,
                         anode=base.anode, ka_ratio=base.ka_ratio,
-                        po_r=base.po_r, wavelength=base.wavelength,
+                        po_r=po_r, wavelength=base.wavelength,
                         asym=asym, bfactor=bfactor,
                         integrated=base.integrated)
     return prm, cell
 
 
-def _bounds(cfg: RefineConfig, n_phase: int) -> tuple[np.ndarray, np.ndarray]:
+def _bounds(cfg: RefineConfig, n_phase: int,
+            n_po: int = 0) -> tuple[np.ndarray, np.ndarray]:
     lo, hi = [], []
     if cfg.refine_zero:
         lo.append(ZERO_BOUNDS[0]); hi.append(ZERO_BOUNDS[1])
@@ -146,7 +180,31 @@ def _bounds(cfg: RefineConfig, n_phase: int) -> tuple[np.ndarray, np.ndarray]:
     if cfg.refine_cell:
         for _ in range(n_phase):
             lo.extend([CELL_BOUNDS[0]] * 2); hi.extend([CELL_BOUNDS[1]] * 2)
+    # v1.4.0: 每相一个 March–Dollase r（顺序与 _pack 一致：sorted(po_r)）
+    for _ in range(n_po):
+        lo.append(PO_BOUNDS[0]); hi.append(PO_BOUNDS[1])
     return np.array(lo), np.array(hi)
+
+
+def _ensure_po_r(phases: list[CifStructure], prm0: ProfileParams,
+                 cfg: RefineConfig) -> dict | None:
+    """refine_po 时按 DEFAULT_PO_HKL 给缺相补 (h,k,l,1.0) 起点。
+
+    调用方已显式给出的 po_r 条目尊重原值，只补缺失；refine_po=False、
+    没有已知惯习面相（如仅附加 CIF）或 prm0.po_r 为空且无相可补时返回
+    None（该次精修不涉及 PO 参数）。
+    """
+    if not cfg.refine_po:
+        return None
+    po_r = dict(prm0.po_r) if prm0.po_r else {}
+    for st in phases:
+        if st.name in po_r:
+            continue
+        hkl = DEFAULT_PO_HKL.get(st.name)
+        if hkl is None:
+            continue
+        po_r[st.name] = (int(hkl[0]), int(hkl[1]), int(hkl[2]), 1.0)
+    return po_r or None
 
 
 def _scaled(struct: CifStructure, fa: float, fc: float) -> CifStructure:
@@ -237,8 +295,11 @@ def refine(phases: list[CifStructure], pat: Pattern, prm0: ProfileParams,
 
     phases: 相列表（CifStructure，name 需与 prm0.po_r 的键对应）
     pat   : 实测/合成谱（Pattern）
-    prm0  : 非线性参数初值（可含 asym/bfactor 初值）
-    cfg   : 精修开关（v1.0.0 起支持 bg_mode/asym/bfactor/cell/进度回调）
+    prm0  : 非线性参数初值（可含 asym/bfactor/po_r 初值）
+    cfg   : 精修开关（v1.0.0 起支持 bg_mode/asym/bfactor/cell/进度回调；
+             v1.4.0 起支持 refine_po：March–Dollase 择优取向 r 精修，
+             缺相按 DEFAULT_PO_HKL 补 (h,k,l,1.0) 起点，结果见
+             RefineResult.po_r）
     """
     if cfg.progress_cb is not None:
         try:
@@ -248,11 +309,14 @@ def refine(phases: list[CifStructure], pat: Pattern, prm0: ProfileParams,
     history: list[float] = []
     gen = [0]
     n_phase = len(phases)
+    # v1.4.0: refine_po 时按内置惯习面补缺失相的 (h,k,l,1.0) 起点
+    prm0 = replace(prm0, po_r=_ensure_po_r(phases, prm0, cfg))
     x0 = _pack(prm0, cfg, n_phase)
     residual_fn, scaled_fn = _build_residual(phases, pat, prm0, cfg, history, gen)
 
     if x0.size:
-        lo, hi = _bounds(cfg, n_phase)
+        n_po = len(prm0.po_r) if (cfg.refine_po and prm0.po_r) else 0
+        lo, hi = _bounds(cfg, n_phase, n_po)
         use_scipy = False
         if cfg.backend == "scipy":
             try:
@@ -330,4 +394,5 @@ def refine(phases: list[CifStructure], pat: Pattern, prm0: ProfileParams,
                         bg=coeffs[basis.shape[0]:].copy(), ycalc=ycalc,
                         rf=rf, success=success, history=history,
                         phase_dropped=dropped, restarted=restarted,
-                        cell_scales=cell_scales, iters=gen[0])
+                        cell_scales=cell_scales, iters=gen[0],
+                        po_r=prm.po_r if cfg.refine_po else None)

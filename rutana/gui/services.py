@@ -341,15 +341,21 @@ def wr_from_mass_ratio(ratio_m: float) -> float:
 # --------------------------------------------------------------------------- #
 def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
                  refine_eta: bool = True, n_bg: int = 3,
+                 refine_po: bool | None = None,
                  extra_cifs: tuple[str, ...] = (), progress_cb: ProgressCb = None,
                  on_iter: Callable[[int, float], None] | None = None,
                  cancel_cb: Callable[[], bool] | None = None) -> dict:
     """B 法全流程：内置两相 + 可选附加 CIF 的 Rietveld 精修。
 
-    返回 ``{"result": RefineResult, "two_theta", "ycalc", "diff", "wa", "wr"}``，
-    其中 ycalc/diff 与观测谱同网格，可直接交给画布叠加显示；
+    返回 ``{"result": RefineResult, "two_theta", "ycalc", "diff", "wa", "wr",
+    "po_r"}``，其中 ycalc/diff 与观测谱同网格，可直接交给画布叠加显示；
     ``wa``/``wr`` 为内置两相的 w(锐钛型)% / w(金红石型)%（Hill–Howard 定量，
-    定量失败时为 None，不影响 R 因子结果）。
+    定量失败时为 None，不影响 R 因子结果）；``po_r`` 为精修出的每相
+    March–Dollase 参数 dict（未开启择优取向精修时为 None）。
+
+    ``refine_po`` 为择优取向（March–Dollase）精修开关：``None`` = 用
+    realdata preset 默认值（与 asym/bfactor/cell 同款模式），仅显式传
+    ``True``/``False`` 时覆盖。
     """
     parse_cif = _core("profile.cif.parse_cif")
     profile_params = _core("refine.realdata.real_params")
@@ -373,6 +379,9 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
         "refine_zero": refine_zero, "refine_uvw": refine_uvw,
         "refine_eta": refine_eta,
         "n_bg": 80 if int(n_bg) == 3 else int(n_bg)}
+    # v1.4.0: 择优取向精修仅当调用方显式指定时覆盖 preset 默认值
+    if refine_po is not None:
+        cfg_overrides["refine_po"] = bool(refine_po)
     # core 的进度/迭代回调走 RefineConfig 字段（refine() 签名不直接收回调）；
     # 用 real_config 探测能力，旧版 core 不支持时静默降级为不确定模式。
     if progress_cb is not None and supports_param(refine_config, "progress_cb"):
@@ -396,6 +405,7 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
         "diff": pat.intensity - ycalc,
         "wa": wa,
         "wr": wr,
+        "po_r": getattr(res, "po_r", None),
     }
 
 

@@ -5,6 +5,8 @@
 - 入口 rutana/gui/__main__.py（python -m rutana.gui 等价）；
 - datas 携带 resources/（品牌资产）与 rutana/data/（内置 CIF，B 法用；
   目录尚未就绪时自动跳过，待 T3.1 落库后打包即含）；
+- v1.4.0：bootloader Splash 启动画面（resources/splash-screen.png），
+  onefile 解压阶段即显示，主窗口就绪后由 __main__._close_boot_splash 关闭；
 - 版本号从 rutana/version.py 读取，exe 名与 build_exe.bat 的副本逻辑对应。
 """
 
@@ -88,11 +90,31 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# v1.4.0：bootloader 启动画面 —— onefile 解压阶段（数秒）即显示品牌图，
+# 解决 exe 冷启动 >6s 无窗口问题。图上已烙品牌+版本号（v1.4.0），故不
+# 附加文本；主窗口 show 后由 rutana/gui/__main__.py 的 _close_boot_splash
+# 关闭（pyi_splash.close()），与 QSplashScreen（上层同图）视觉连续。
+splash = Splash(
+    "resources/splash-screen.png",
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,
+    text_size=12,
+    min_font_color="white",
+    always_on_top=True,
+)
+
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.datas,
+    splash,
+    # v1.4.0：bootloader splash 的运行时依赖（tcl86t.dll/tk86t.dll 及
+    # _tcl_data/_tk_data 脚本树）。PyInstaller 官方模板中 splash.binaries
+    # 必须作为独立 TOC 参数传入 EXE，否则 onefile 解压期找不到 Tcl/Tk，
+    # 启动画面静默失败。
+    splash.binaries,
     [],
     name=f"PolyXRD-RutAna-v{_ver}",
     debug=False,

@@ -331,3 +331,79 @@ Rwp>10% 而触发 3 轮 LM 重启（每轮 60 迭代），单样白白多花 ~2 
 更差结果。v1.0.0 改用含晶胞缩放的完整模型末次评估（`history[-1]`）判定，
 正常路径不再重启；保险机制保留（LM 失败 / W 触界 / Rwp>10% 时仍介入，
 噪声谱单测覆盖 `test_restart_fires_when_lm_fails`）。
+
+---
+
+## v1.4.0 · 择优取向（March–Dollase）精修实证
+
+### v1.4.0.1 实现方案（预存峰贡献明细 + 前向施加）
+
+择优取向参数 r 的精修若按朴素实现（每次残差评估重算峰列表），单样本
+精修将从 ~10s 劣化到分钟级（`compute_peaks` 单次约 125ms(锐钛)+36ms
+(金红石)）。v1.4.0 采用**明细路径**：
+
+1. `struct.compute_peaks(po_detail=True)` 除峰列表外返回与峰逐项对齐的
+   贡献明细 `detail[i] = [(val_pre_po, cos_alpha), ...]`（val_pre_po =
+   未乘 PO 权重的 |F|²·LP·wgt，cos_alpha = 该 hkl 与择优面法向夹角余弦）；
+   po_vec 解析提前到与 po_neutral 无关（r=1 时也算 cos_alpha，明细要在
+   任意 r 下复用）。
+2. `forward._phase_peaks` 缓存值改为 `(peaks_at_r1, detail, skipped)`，
+   **缓存键只含 po 的 (h,k,l) 部分、不再含 r**——r 变化不再击穿缓存；
+   po 非 None 时以 `po=(h,k,l,1.0), po_detail=True` 调 compute_peaks。
+3. `forward._apply_po_r(peaks, detail, r)` 在每次前向时按当前 r 廉价
+   重加权（O(峰数)）：`i = Σ v·march_dollase_weight(ca, r)`。
+
+数值等价性有测试把关（tests/test_po_refine.py）：明细路径与直接传
+`po=(h,k,l,r)` 的结果**逐位一致**（同样的累加顺序与乘序），r=1 时与
+po=None 逐位一致；po_detail=False 时 compute_peaks 行为逐位不变
+（黄金基线不漂）。
+
+### v1.4.0.2 精修参数接线（core/refine/nonlinear.py）
+
+- `PO_BOUNDS = (0.2, 5.0)`；`DEFAULT_PO_HKL = {"anatase": (0,0,1),
+  "rutile": (1,1,0)}`（TiO2 惯习：锐钛板状 (001)、金红石柱状 (110)；
+  未知相名不纳入 PO 精修）。
+- `RefineConfig.refine_po`（默认 False）；`RefineResult.po_r`。
+- `_ensure_po_r` 给缺相补 `(h,k,l,1.0)` 起点（调用方显式给的条目尊重
+  原值）；`_pack`/`_unpack`/`_bounds` 按 `sorted(po_r)` 顺序把每相 r
+  追加到向量末尾（cell 参数之后），三方顺序严格一致。
+- 重启链（`_restart_points`）透传 po_r，PO 参数不丢。
+
+### v1.4.0.3 四样品真实数据对照实验（tools/diag_po.py）
+
+real_params() + real_config() 与 real_config(refine_po=True) 各跑一次：
+
+| 样品 | 配置 | Rwp% | 金红石实测% | 相对误差% | r(锐钛) | r(金红石) | 用时 s |
+|---|---|---|---|---|---|---|---|
+| 8%  pd全谱 | PO 关 | 9.47 | 8.21 | +2.62 | — | — | 10 |
+| 8%  pd全谱 | PO 开 | 9.46 | 8.23 | +2.85 | 1.006 | 1.008 | 10 |
+| 18% pd全谱 | PO 关 | 9.31 | 18.11 | +0.59 | — | — | 9 |
+| 18% pd全谱 | PO 开 | 9.29 | 18.17 | +0.93 | 1.005 | 1.017 | 6 |
+| 36% pd全谱 | PO 关 | 9.75 | 35.90 | −0.29 | — | — | 6 |
+| 36% pd全谱 | PO 开 | 9.72 | 35.99 | −0.04 | 1.007 | 1.013 | 8 |
+| 50% 岛津全谱 | PO 关 | 9.66 | 49.20 | −1.60 | — | — | 6 |
+| 50% 岛津全谱 | PO 开 | 9.63 | 49.32 | −1.36 | 1.008 | 1.014 | 9 |
+
+- Rwp 最大劣化 **+0.00pp**（判据 ≤ +0.3pp，实际四样全部不降反微升）；
+- PO 开定量最差 |相对误差| **2.85%**（判据 ≤3%，四样全部满足）；
+- 精修出的 r(锐钛) 1.005–1.008、r(金红石) 1.008–1.017：该数据集
+  （石墨单色器 + 压片装样）**无明显择优取向**，PO 修正近中性——这正
+  说明默认开启是安全的（不会把无织构样本修出伪织构），同时对确有
+  织构的样品提供保护；
+- 单样本耗时与关闭版同量级（6–10s，明细路径 O(峰数) 重加权）。
+
+**决策**：判据全部满足 → `REAL_REFINE_CONFIG` 默认
+`refine_po=True`，GUI「择优取向修正」复选框默认勾选；
+`tests/golden/method_b_realdata.json` 按新 preset 重冻结
+（18% 基线 wr 18.106 → 18.17，容差 ±0.5pp 同步覆盖两代）。
+
+### v1.4.0.4 合成样回收与性能护栏（tests/test_po_refine.py）
+
+用 Rutana 自己的前向模型合成两相混合样（anatase po=(0,0,1,1.4) +
+rutile r=1，已知 scale、泊松低噪声、tent 背景、integrated=True）：
+
+- 回收 r_a = 1.400、r_r = 1.002（判据 ±0.15），Rwp ≈1.2%（判据 ≤2%），
+  QPA 回收 |误差| ≤1pp；
+- 强织构样（真实 r=0.25）回收值落在 PO_BOUNDS 内且偏向真值一侧；
+- refine_po=False 时 result.po_r is None 且 ycalc 与基线逐位一致；
+- 性能护栏：开 PO 的单样本耗时 ≤ 关闭版 3 倍（实测接近 1.x 倍）。

@@ -14,6 +14,7 @@
 结果行约定（B 法）::
 
     {"path","sample","wa","wr","rwp","rp","chi2","ok","message",
+     "po_r": {phase: (h,k,l,r)} 或 None,
      "fit": {"two_theta","yobs","ycalc","diff"}}   # fit 仅成功行有
 
 CSV 一律 **UTF-8 with BOM**（``utf-8-sig``）写出：中文表头/备注在 Excel
@@ -48,13 +49,16 @@ def is_tool_csv(path: Any) -> bool:
 
     读首行按 UTF-8（容错 BOM/乱码）解析：列数等于本工具表头列数且首列
     是任一语言下的「文件名」表头即判定为本工具产物。普通两列谱图 CSV、
-    空文件、乱码文件均返回 False。
+    空文件、乱码/二进制文件均返回 False（csv 解析异常同样视为非产物，
+    不让导入过滤器被脏文件打崩）。
     """
     try:
         with Path(str(path)).open("r", encoding="utf-8-sig",
                                   errors="replace", newline="") as fh:
             row = next(csv.reader(fh), None)
     except OSError:
+        return False
+    except csv.Error:
         return False
     if not row:
         return False
@@ -149,14 +153,17 @@ def run_method_a_batch(items: Sequence[tuple[Any, Any]], win_a: tuple[float, flo
 
 def run_method_b_batch(items: Sequence[tuple[Any, Any]], *, refine_zero: bool = True,
                        refine_uvw: bool = True, refine_eta: bool = True,
-                       n_bg: int = 3, extra_cifs: tuple[str, ...] = (),
+                       n_bg: int = 3, refine_po: bool | None = None,
+                       extra_cifs: tuple[str, ...] = (),
                        progress_cb: ProgressCb = None,
                        on_iter: Callable[[int, float], None] | None = None,
                        cancel_cb: Callable[[], bool] | None = None) -> list[dict]:
     """逐个文件跑 B 法 Rietveld 精修（单文件 ~10 s，务必走后台线程）。
 
     items: ``[(path, Pattern), ...]``；成功行的 ``fit`` 携带绘制谱图所需的
-    ``two_theta / yobs / ycalc / diff``（供主画布与逐文件 PNG 导出）。
+    ``two_theta / yobs / ycalc / diff``（供主画布与逐文件 PNG 导出），
+    ``po_r`` 携带精修出的每相 March–Dollase 参数（未开启时为 None；
+    仅用于界面回填，不写入 CSV——CSV 列数保持 7 列不变）。
     单文件失败只记 ``message`` 并继续；取消时返回已完成的行（同 A 法）。
     """
     total = max(1, len(items))
@@ -172,11 +179,12 @@ def run_method_b_batch(items: Sequence[tuple[Any, Any]], *, refine_zero: bool = 
         row: dict[str, Any] = {
             "path": str(path), "sample": sample, "wa": None, "wr": None,
             "rwp": None, "rp": None, "chi2": None, "ok": False, "message": "",
-            "fit": None}
+            "po_r": None, "fit": None}
         try:
             res = services.run_method_b(
                 pat, refine_zero=refine_zero, refine_uvw=refine_uvw,
-                refine_eta=refine_eta, n_bg=n_bg, extra_cifs=extra_cifs,
+                refine_eta=refine_eta, n_bg=n_bg, refine_po=refine_po,
+                extra_cifs=extra_cifs,
                 progress_cb=services.sub_progress(progress_cb,
                                                   (idx - 1) / total, idx / total),
                 on_iter=on_iter, cancel_cb=cancel_cb)
@@ -190,7 +198,8 @@ def run_method_b_batch(items: Sequence[tuple[Any, Any]], *, refine_zero: bool = 
             continue
         rf = res["result"].rf
         row.update(wa=res.get("wa"), wr=res.get("wr"),
-                   rwp=float(rf.rwp), rp=float(rf.rp), chi2=float(rf.chi2), ok=True)
+                   rwp=float(rf.rwp), rp=float(rf.rp), chi2=float(rf.chi2), ok=True,
+                   po_r=res.get("po_r"))
         row["fit"] = {"two_theta": res["two_theta"], "yobs": pat.intensity,
                       "ycalc": res["ycalc"], "diff": res["diff"]}
         out.append(row)

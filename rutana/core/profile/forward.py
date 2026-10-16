@@ -19,6 +19,7 @@ from rutana.core.profile.cif import CifStructure
 from rutana.core.profile.shape import (
     DEFAULT_WAVELENGTH,
     _pv_peak,
+    march_dollase_weight,
     resolve_wavelengths,
 )
 from rutana.core.profile.struct import compute_peaks
@@ -83,31 +84,87 @@ def _window_slice(grid: np.ndarray, pos: float, half: float) -> tuple[int, int]:
     return max(i0, 0), min(i1, grid.size)
 
 
-# 衍射峰枚举缓存：peaks 只依赖 (结构, 波长, 窗口, po)，与 zero/U/V/W/eta 无关。
-# 精修中每次残差评估都会调 forward，缓存让 LM 每代只做峰形叠加（T4.8 性能）。
+# 衍射峰枚举缓存：peaks 只依赖 (结构, 波长, 窗口, po 的 hkl 部分)，与
+# zero/U/V/W/eta 及 March–Dollase r 无关。v1.4.0 起缓存键只含 po 的
+# (h,k,l) 部分——r 变化不再击穿缓存（PO 精修每次残差评估只廉价重加权）。
 _PEAKS_CACHE: dict[tuple, tuple] = {}
 _PEAKS_CACHE_MAX = 256
 
 
 def _phase_peaks(struct: CifStructure, prm: ProfileParams,
                  tmin: float, tmax: float):
-    """计算该相的衍射峰列表 ([(pos, |F|²·LP·PO·wgt, d)], skipped)，带缓存。"""
+    """计算该相的衍射峰与择优取向贡献明细，带缓存。
+
+    返回 ``(peaks, detail, skipped)``：po 非 None 时 peaks 以 r=1.0
+    计算（PO 权重由 :func:`_apply_po_r` 按当前 r 前向施加），detail 为
+    ``compute_peaks(po_detail=True)`` 的贡献明细（与 peaks 逐项对齐）；
+    po 为 None 时 detail 为 None。
+    """
     po = None
     if prm.po_r:
         po = prm.po_r.get(struct.name)
+    po_hkl = (int(po[0]), int(po[1]), int(po[2])) if po is not None else None
     key = (id(struct), struct.name, struct.cell, len(struct.atoms),
            prm.anode, prm.ka_ratio, prm.wavelength, float(tmin), float(tmax),
-           tuple(po) if po is not None else None)
+           po_hkl)
     hit = _PEAKS_CACHE.get(key)
     if hit is None:
         comps = resolve_wavelengths(prm.wavelength, prm.anode, prm.ka_ratio)
-        peaks, skipped = compute_peaks(struct, prm.wavelength, tmin, tmax,
-                                       po=po, wavelengths=comps)
-        hit = (peaks, skipped)
+        if po is None:
+            peaks, skipped = compute_peaks(struct, prm.wavelength, tmin, tmax,
+                                           po=None, wavelengths=comps)
+            hit = (peaks, None, skipped)
+        else:
+            # r 固定取 1.0：峰位/权重在明细路径外与实际 r 解耦
+            peaks, skipped, detail = compute_peaks(
+                struct, prm.wavelength, tmin, tmax,
+                po=(po[0], po[1], po[2], 1.0), wavelengths=comps,
+                po_detail=True)
+            hit = (peaks, detail, skipped)
         if len(_PEAKS_CACHE) >= _PEAKS_CACHE_MAX:
             _PEAKS_CACHE.clear()
         _PEAKS_CACHE[key] = hit
     return hit
+
+
+def _po_r_of(prm: ProfileParams, struct: CifStructure) -> float | None:
+    """该相当前的 March–Dollase r（无 po_r 或未配置该相时返回 None）。"""
+    if not prm.po_r:
+        return None
+    po = prm.po_r.get(struct.name)
+    if po is None:
+        return None
+    return float(po[3])
+
+
+def _apply_po_r(peaks, detail, r: float):
+    """按 March–Dollase r 重算各峰积分强度（O(峰数)，精修每次评估可承受）。
+
+    数值与直接传 po=(h,k,l,r) 给 compute_peaks 完全一致（明细预存
+    val_pre_po 与 cos_alpha，此处只按新 r 加权求和）；r=1 或无明细时
+    零开销返回原 peaks。
+    """
+    if r == 1.0 or not detail:
+        return peaks
+    out = []
+    for (pos, _val, d), contribs in zip(peaks, detail):
+        i = 0.0
+        for v, ca in contribs:
+            i += v * march_dollase_weight(ca, r)
+        if i > 0:
+            out.append((pos, i, d))
+    return out
+
+
+def _peaks_with_po(prm: ProfileParams, struct: CifStructure,
+                   tmin: float, tmax: float):
+    """取该相峰列表并按 prm.po_r 中的 r 施加择优取向权重。"""
+    peaks, detail, _skipped = _phase_peaks(struct, prm, tmin, tmax)
+    if detail is not None:
+        r = _po_r_of(prm, struct)
+        if r is not None and r != 1.0:
+            peaks = _apply_po_r(peaks, detail, r)
+    return peaks
 
 
 def _asym_split(pos_shifted: float, fwhm: float, asym: float) -> tuple[float, float]:
@@ -156,7 +213,7 @@ def compute_phase_profile_naive(struct: CifStructure, grid: np.ndarray,
                                 prm: ProfileParams,
                                 tmin: float = 5.0, tmax: float = 90.0) -> np.ndarray:
     """全网格参考实现（慢，供 T4.8 一致性测试对照）。"""
-    peaks, _skipped = _phase_peaks(struct, prm, tmin, tmax)
+    peaks = _peaks_with_po(prm, struct, tmin, tmax)
     fwhm_func = caglioti_2theta(prm.U, prm.V, max(prm.W, MIN_W))
     prof = np.zeros_like(grid, dtype=np.float64)
     for pos, height, d in peaks:
@@ -180,7 +237,7 @@ def compute_phase_profile(struct: CifStructure, grid: np.ndarray,
     返回 float64 数组，与 grid 等长，全非负、最大值 > 0（晶胞合法时）。
     """
     grid = np.asarray(grid, dtype=np.float64)
-    peaks, _skipped = _phase_peaks(struct, prm, tmin, tmax)
+    peaks = _peaks_with_po(prm, struct, tmin, tmax)
     fwhm_func = caglioti_2theta(prm.U, prm.V, max(prm.W, MIN_W))
     prof = np.zeros_like(grid, dtype=np.float64)
     for pos, height, d in peaks:
@@ -195,7 +252,7 @@ def compute_phase_profile(struct: CifStructure, grid: np.ndarray,
 def strongest_peak_position(struct: CifStructure, prm: ProfileParams,
                             tmin: float = 5.0, tmax: float = 90.0) -> float:
     """最强衍射峰的 2θ 位置（不含 zero），供 QA 与测试。"""
-    peaks, _skipped = _phase_peaks(struct, prm, tmin, tmax)
+    peaks = _peaks_with_po(prm, struct, tmin, tmax)
     if not peaks:
         raise ValueError(f"{struct.name}: 窗口内无衍射峰")
     return max(peaks, key=lambda t: t[1])[0]

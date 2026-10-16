@@ -282,9 +282,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_130():
-    """版本号已推进到 1.3.0（UI 版本号与 EXE 名同源）。"""
-    assert __version__ == "1.3.0"
+def test_version_is_140():
+    """版本号已推进到 1.4.0（UI 版本号与 EXE 名同源）。"""
+    assert __version__ == "1.4.0"
 
 
 # --------------------------------------------------------------------------- #

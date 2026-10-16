@@ -6,6 +6,11 @@ tests/golden/method_b_realdata.json）。此处抽两个端元样品做轻量回
 - 36% pd 全谱（中段）
 判据与验收一致：Rwp ≤ 10%（GB/T 30793 B 法硬条款）、金红石回收
 |相对误差| ≤ 3%。
+
+v1.4.0：realdata preset 起默认开启择优取向（March–Dollase）精修
+（refine_po=True，四样实证 Rwp 不劣化、定量最差 +2.85%），本回归的
+Rwp/定量判据不变（18% 基线 wr 由 18.106 微移至 ~18.17，容差 ±0.5pp
+覆盖；PO 精修出的 r≈1.005–1.017 见 tools/diag_po.py 对照表）。
 """
 from __future__ import annotations
 
@@ -61,7 +66,8 @@ def test_run_method_b_returns_two_phase_quantities():
     """v1.1.0：GUI services.run_method_b 应返回内置两相定量 wa/wr。
 
     18% pd 全谱真跑一次，对照冻结基线 tests/golden/method_b_realdata.json
-    （wr = 18.106）；容差 ±0.5pp 覆盖精修的微小数值抖动。
+    （v1.3.0 基线 wr = 18.106；v1.4.0 起 preset 开择优取向精修后微移至
+    ~18.17，容差 ±0.5pp 同时覆盖两代基线）。
     """
     from rutana.gui import services
 
@@ -71,3 +77,7 @@ def test_run_method_b_returns_two_phase_quantities():
     assert wa is not None and wr is not None, "内置两相定量不应降级为 None"
     assert wr == pytest.approx(18.106, abs=0.5)
     assert wa + wr == pytest.approx(100.0, abs=0.01), "两相应归一到 100%"
+    assert out["po_r"] is not None, "v1.4.0 preset 默认开 PO，应回传 po_r"
+    ra = out["po_r"]["anatase"][3]
+    rr = out["po_r"]["rutile"][3]
+    assert 0.2 <= ra <= 5.0 and 0.2 <= rr <= 5.0

@@ -30,6 +30,29 @@ from rutana.gui.workers import run_busy_task
 from rutana.i18n import tr
 
 
+def _po_pair(po_r) -> tuple[float | None, float | None]:
+    """从 po_r dict 取内置两相的 (r_锐钛, r_金红石)；缺失返回 (None, None)。
+
+    相名即 CIF 名 "anatase"/"rutile"；附加相不显示。po_r 为 None
+    （未开启择优取向精修）或两相都缺时返回 (None, None)。
+    """
+    if not po_r:
+        return None, None
+    ra = po_r.get("anatase")
+    rr = po_r.get("rutile")
+    fa = float(ra[3]) if ra else None
+    fr = float(rr[3]) if rr else None
+    return fa, fr
+
+
+def _po_text(po_r) -> str:
+    """内置两相 r 的展示文本（「ra / rr」；缺失显示「—」）。"""
+    fa, fr = _po_pair(po_r)
+    if fa is None or fr is None:
+        return tr("verdict.na")
+    return f"{fa:.2f} / {fr:.2f}"
+
+
 class TaskMixin:
     """主窗口的「跑后台任务」能力。"""
 
@@ -195,6 +218,7 @@ class TaskMixin:
             return
         self.tabs.b_panel.set_rfactors(row["rwp"], row["rp"], row["chi2"])
         self.tabs.b_panel.set_quantities(row["wa"], row["wr"])
+        self.tabs.b_panel.set_po(*_po_pair(row.get("po_r")))
         fit = row.get("fit")
         if fit:
             self.canvas.show_fit(np.asarray(fit["two_theta"]),
@@ -212,7 +236,8 @@ class TaskMixin:
                      (tr("result.rwp"), f"{row['rwp']:.2f}"),
                      (tr("result.rp"), f"{row['rp']:.2f}"),
                      (tr("result.chi2"), f"{row['chi2']:.3f}"),
-                     (tr("result.fit_verdict"), verdict)],
+                     (tr("result.fit_verdict"), verdict),
+                     (tr("result.b_po"), _po_text(row.get("po_r")))],
             "verdict": verdict,
         }
 
@@ -245,6 +270,7 @@ class TaskMixin:
         wa, wr = data.get("wa"), data.get("wr")
         self.tabs.b_panel.set_quantities(
             None if wa is None else float(wa), None if wr is None else float(wr))
+        self.tabs.b_panel.set_po(*_po_pair(data.get("po_r")))
         self.canvas.show_fit(np.asarray(data["two_theta"]),
                              np.asarray(self._current_pattern().intensity),
                              np.asarray(data["ycalc"]),
@@ -262,6 +288,7 @@ class TaskMixin:
                 (tr("result.chi2"), f"{rf.chi2:.3f}"),
                 (tr("result.fit_verdict"),
                  tr("verdict.fit_good" if rf.rwp <= 10.0 else "verdict.fit_bad")),
+                (tr("result.b_po"), _po_text(data.get("po_r"))),
             ],
             "verdict": tr("verdict.fit_good" if rf.rwp <= 10.0 else "verdict.fit_bad"),
         }
@@ -279,6 +306,7 @@ class TaskMixin:
                 batch.run_method_b_batch, items=items,
                 refine_zero=params["refine_zero"], refine_uvw=params["refine_uvw"],
                 refine_eta=params["refine_eta"], n_bg=params["n_bg"],
+                refine_po=params["refine_po"],
                 extra_cifs=params["extra_cifs"]),
             title=tr("busy.title_batch_b"),
             cancellable=True,
