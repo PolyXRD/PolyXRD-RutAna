@@ -41,6 +41,10 @@ a = Analysis(
         "rutana.core.dtypes",
         "rutana.core.method_a",
         "rutana.core.patterns",
+        # v1.6.0：多格式读谱器 vendor 副本（新增模块显式收集）
+        "rutana.core.vendor.model",
+        "rutana.core.vendor.raw_formats",
+        "rutana.core.vendor.text_formats",
         "rutana.core.peakmeasure",
         "rutana.core.plot",
         "rutana.core.smooth",

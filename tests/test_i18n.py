@@ -88,23 +88,24 @@ def test_placeholders_consistent():
             f"{key} 占位符在三语中不一致: {names}")
 
 
-def test_version_is_140():
+def test_version_is_160():
     """版本号与 rutana/version.py 同源推进（UI/EXE/安装包统一取这里）。"""
-    assert __version__ == "1.5.0"
+    assert __version__ == "1.6.0"
 
 
 def test_all_code_keys_defined_in_all_languages():
     """源码里出现的每个 tr("key") 都必须在三语表中（防漏译/拼错）。
 
-    例外：rutana/gui/registration.py 为家族注册模块逐字节原样复用
-    （PolyXRD-Reg），其内置 tr() 是模块自带的独立文案体系，不走
-    rutana.i18n，扫描时跳过（其 tr("OK") 等短键会被本正则误报）。
+    例外：rutana/gui/registration.py 为家族注册模块逐字节原样复用；
+    rutana/core/vendor/text_formats.py 为 Converter 读谱器副本并自带局部中文错误
+    格式化器。两者的 ``tr()`` 均不走 rutana.i18n，扫描时跳过。
     """
     pat = re.compile(r'tr\(\s*"([A-Za-z0-9_.]+)"')
     root = Path(__file__).resolve().parent.parent / "rutana"
     missing: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.py")):
-        if path.name == "registration.py":
+        if path.name == "registration.py" or path.as_posix().endswith(
+                "core/vendor/text_formats.py"):
             continue
         text = path.read_text(encoding="utf-8")
         for key in sorted(set(pat.findall(text))):

@@ -41,7 +41,7 @@ def test_ragged_line_raises(tmp_path: Path) -> None:
 def test_unknown_extension_raises() -> None:
     """未知扩展名抛 NotImplementedError。"""
     with pytest.raises(NotImplementedError):
-        load_pattern(DATA_DIR / "no_such_file.raw")
+        load_pattern(DATA_DIR / "no_such_file.uxd")
 
 
 def test_clip_window(tmp_path: Path) -> None:

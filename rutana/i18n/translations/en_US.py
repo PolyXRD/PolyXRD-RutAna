@@ -109,7 +109,7 @@ TRANSLATIONS: dict[str, str] = {
     # ---- File dialogs ----
     "dlg.open_pattern": "Open pattern file",
     "dlg.add_folder": "Select pattern folder",
-    "filter.pattern": "Patterns (*.xy *.txt *.dat *.csv);;All files (*.*)",
+    "filter.pattern": "Patterns (*.xy *.txt *.dat *.csv *.raw *.org *.rsm *.rbg *.rk1 *.rax *.rlz *.rfi *.mdi *.gsas *.gss *.gsa *.gda *.fxye *.ras *.rasx *.xye *.qye *.chi *.qchi *.xrdml *.xml *.brml *.json *.smz);;All files (*.*)",
     "dlg.export_html": "Export HTML report",
     "dlg.export_csv": "Export CSV data",
     "dlg.export_png": "Export pattern PNG",

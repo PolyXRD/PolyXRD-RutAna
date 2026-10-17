@@ -48,7 +48,12 @@ from rutana.version import APP_NAME, __version__
 LANG_ORDER = ("zh_CN", "en_US", "ja_JP")
 
 #: 「添加文件夹…」用的谱图扩展名（与 filter.pattern 的口径一致）
-PATTERN_EXTS = (".xy", ".txt", ".dat", ".csv")
+PATTERN_EXTS = (
+    ".xy", ".txt", ".dat", ".csv", ".raw", ".org", ".rsm", ".rbg",
+    ".rk1", ".rax", ".rlz", ".rfi", ".mdi", ".gsas", ".gss", ".gsa",
+    ".gda", ".fxye", ".ras", ".rasx", ".xye", ".qye", ".chi", ".qchi",
+    ".xrdml", ".xml", ".brml", ".json", ".smz",
+)
 
 
 class MainWindow(TaskMixin, ExportMixin, QMainWindow):
@@ -279,6 +284,10 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
                 continue
             self._patterns[p] = pat
             self.file_list.addItem(name)
+            item = self.file_list.item(self.file_list.count() - 1)
+            format_key = getattr(pat, "meta", {}).get("format_key")
+            if format_key:
+                item.setToolTip(f"{p}\nformat_key: {format_key}")
             last_ok = p
             ok_n += 1
         if last_ok:

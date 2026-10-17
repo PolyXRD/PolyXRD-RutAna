@@ -34,6 +34,21 @@ refine/ 精修引擎与 QPA）；CLI：`rutana/cli/rutana.py`；
 GUI（PySide6，中/英/日）：`rutana/gui/`；
 虚拟实验室与基准：`tools/gen_virtual.py`、`tools/bench.py`、`tools/bench_b.py`。
 
+## 支持的谱图格式
+
+v1.6.0 起，「打开谱图」和「添加文件夹」支持以下格式：
+
+- 通用文本与 FullProf：`.xy`、`.txt`、`.dat`、`.csv`、`.smz`（含两列、FullProf `pd`、岛津 ASCII 与 Jade 两行头）；
+- 多厂商二进制 RAW：`.raw`，以及岛津同容器的 `.org`、`.rsm`、`.rbg`、`.rk1`、`.rax`、`.rlz`、`.rfi`；
+- MDI/Jade：`.mdi`；GSAS：`.gsas`、`.gss`、`.gsa`、`.gda`、`.fxye`；
+- Rigaku：`.ras`、`.rasx`；Topas/通用：`.xye`、`.qye`；Fit2D：`.chi`、`.qchi`；
+- XML/压缩容器：`.xrdml`、`.xml`、`.brml`；谱图 JSON：`.json`。
+
+读谱器复用 **PolyXRD-Converter** 的格式识别与解析实现，以 vendor 副本随 RutAna
+发布，不在运行时 import 兄弟仓库。RAW 会按文件头魔数自动识别 Rigaku RINT、
+Scintag RAW2、Bruker/Siemens v1 与岛津私有容器；若文件头不能给出可信 2θ 轴，
+软件会明确拒绝并提示先从仪器软件导出为文本格式，不会用点序号伪造角度轴。
+
 ### CLI 用法
 
 ```bash

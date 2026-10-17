@@ -477,3 +477,98 @@ Zhenghan Yang (kira-96) 翻译的 `ChineseSimplified.isl`（6.1.0+ 兼容，
 - 出码：开发方用 `PolyXRD-Reg/dist/PolyXRD-RegTool.exe` 或
   `make_reg_code.py`（本轮以 `make_reg_code.py "清华大学材料学院"`
   出码在 RutAna 侧 verify 通过并还原同名，见跨仓库一致性测试）。
+
+## v1.6.0 · 多格式打开支持
+
+> 实施日期 2026-10-17。读谱器以本地 vendor 副本复用
+> `PolyXRD-Converter` 的 `raw_formats.py`、`loader.py` 读谱函数与 `XRDData`；
+> 运行时不 import 兄弟仓库。原 `.xy/.txt/.dat/.csv` 的 FullProf pd / 两列路径
+> 保持优先，v1.0.0 真实数据黄金基线不变。
+
+### 支持范围与 RAW 安全策略
+
+- 文本：`.xy/.txt/.dat/.csv/.smz`（两列、FullProf、Jade、岛津 ASCII）；
+- RAW：`.raw/.org/.rsm/.rbg/.rk1/.rax/.rlz/.rfi`，按魔数识别 Rigaku RINT、
+  Scintag RAW2、Bruker/Siemens v1、Shimadzu XRD；
+- MDI/GSAS：`.mdi/.gsas/.gss/.gsa/.gda/.fxye`；Rigaku `.ras/.rasx`；
+- Topas/Fit2D：`.xye/.qye/.chi/.qchi`；XML/容器：
+  `.xrdml/.xml/.brml/.json`。
+
+RAW 的 `axis_confident=False` 不转换为假 2θ：RutAna 直接抛中文错误，要求先从
+仪器软件导出文本。截断 Shimadzu RAW、Bruker v1 真机样本与未知 RAW 均有负例覆盖。
+
+### 真实样本格式覆盖与黄金锚点
+
+以下文件均来自 `D:/Project/XRD/XRData`，断言点数、2θ 严格递增、强度有限且
+非负；六个代表文件的点数/端点/最强峰另冻结于
+`tests/golden/formats_real.json`（角度容差 `5e-6°`，覆盖 float32 头舍入）。
+
+| 格式/变体 | 真实样本（相对 XRData） | 点数 | 2θ 起止 / ° | 最强峰 / ° |
+|---|---|---:|---:|---:|
+| Shimadzu RAW | `Shimadzu Data/Std/Si/Si.RAW` | 5751 | 25.000–140.000 | 28.380 |
+| Shimadzu ORG | `Shimadzu Data/Std/Si/Si.ORG` | 5751 | 25.000–140.000 | 28.380 |
+| Shimadzu RSM | `Shimadzu Data/Std/Si/Si.RSM` | 5751 | 25.000–140.000 | 28.380 |
+| Shimadzu RBG | `Shimadzu Data/Std/Si/Si.RBG` | 5751 | 25.000–140.000 | 28.380 |
+| Shimadzu RFI | `Shimadzu Data/Std/Si/Si.RFI` | 401 | 25.000–140.000 | 95.150 |
+| Shimadzu RAX | `Shimadzu Data/ENVCAL/053/053.RAX` | 1210 | 25.0013–43.9826 | 26.7911 |
+| Shimadzu RLZ | `Shimadzu Data/Crynity/CRYN/CRYN.RLZ` | 412 | 4.9828–40.0000 | 25.9420 |
+| Rigaku RINT RAW | `csuHJW/data001：TiO2双相.raw` | 3500 | 10.000–79.980 | 25.260 |
+| Scintag RAW2 | `IUCr/BAUXITE.RAW` | 7251 | 5.000–150.000 | 18.300 |
+| MDI | `IUCr/BAUXITE.mdi` | 7250 | 5.020–150.000 | 18.300 |
+| GSAS GSS | `IUCr/gsas/bauxite.gss` | 7251 | 5.000–150.000 | 18.300 |
+
+另对当前本机样本树做全量无崩溃扫描：`.raw` 187 个中 185 个成功，2 个按设计
+以“不可信角度轴”拒绝（Rigaku `csuHJW/data006：AlCoO-750C.raw`、Bruker v1
+`csuHJW/data035：硬质合金深冷处理后WC相的残余应力.raw`）；`.org` 52/52、
+`.mdi` 32/32、`.gss` 28/28 成功。拒绝项均为文件头无法给出可信 2θ 的已知样本，
+不是解析崩溃。
+
+本地没有真实 `.ras/.rasx/.xye/.qye/.chi/.qchi/.xrdml/.xml/.brml/.json/.smz`
+样本的格式，以共同真值（100 点，20.00–21.98°）合成覆盖；同时覆盖 GSAS
+五种扩展名、FullProf DAT 与 Jade TXT 特征分流，共 18 个合成文件。
+
+### RAW ↔ ASCII 交叉验证
+
+容差采用 Converter 已验证的 Rigaku float32 头口径 `max|Δ2θ| < 5e-4°`；
+强度允许整体缩放，先除各自最大值再比较。三组实测远优于容差：
+
+| 数据集 | 点数 | max\|Δ2θ\| / ° | 最强峰 RAW/TXT / ° | 强度比例 | 归一化最大差 |
+|---|---:|---:|---:|---:|---:|
+| `smz geshi/1. Si` | 9001 | 1.421e-14 | 28.420 / 28.420 | 1.000000 | 0 |
+| `csuHJW/data001：TiO2双相` | 3500 | 1.421e-14 | 25.260 / 25.260 | 1.000000 | 0 |
+| `IUCr/BAUXITE` | 7251 | 2.842e-14 | 18.300 / 18.300 | 1.000000 | 0 |
+
+### Converter oracle 与下游连通
+
+`tests/test_formats.py` 把 `D:/Project/XRD/PolyXRD-Converter/src` 临时加入
+`sys.path`，对 **5 个真实文件 + 18 个合成文件 = 23 个文件**逐点比较；本机
+oracle 成功 import，2θ 与强度均在 `atol=1e-12, rtol=0` 下通过，未 skip。
+若外部源码不在测试机才显式 `pytest.skip`。
+
+下游用 `csuHJW/data001：TiO2双相.raw` 直接执行 A 法测峰：锐钛峰
+25.26°、净面积 1560.92；金红石峰 27.40°、净面积 147.79，两峰均
+`ok=True`，证明新格式“打开即能算”。负例还覆盖未知扩展名、空文件、截断
+RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可信轴中文拒绝。
+
+### 测试统计（v1.5.0 基线 235 passed + 1 skipped，只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest tests/` | **262 项：261 passed + 1 skipped**（净增 26；唯一 skip 仍是 `test_forward.py` 的 SynthPattern oracle 依赖，与本版无关） |
+| tests/test_formats.py（新增） | 25 项全绿：11 组真实格式覆盖 + 18 个合成文件、3 组 RAW↔ASCII、oracle 对拍、黄金冻结、5 类负例、A 法下游连通 |
+| tests/test_gui_smoke.py（增补） | 新扩展名在 `PATTERN_EXTS` 与三语 `filter.pattern` 口径完全一致；版本号 1.6.0 |
+
+| tests/test_i18n.py（增补） | 键扫描对 vendor 副本 `text_formats.py` 豁免（其 `tr()` 为本地中文错误格式化器，非 rutana.i18n 体系） |
+| tests/test_patterns.py（改 1 处） | 未知扩展名负例改用 `.uxd`（`.raw` 在 v1.6.0 已成为受支持格式） |
+| tools/bench_b.py | **ALL PASS**（8 配比 round-trip，Rwp 3.41–4.04%，回收误差 ≤0.121pp） |
+
+### 构建产物（v1.6.0 实际构建 + PYZ 佐证）
+
+| 产物 | 大小 | 佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.6.0.exe`（内部评估版 onefile，附固定名副本 `PolyXRD-RutAna.exe`） | 102.7 MB | CArchive 顶层 TOC 542 项；PYZ 含 `rutana.core.vendor{,.model,.raw_formats,.text_formats}` 4 项、**不含** `rutana.gui.registration`（excludes 生效）；含 `rthook_internal`（运行期版次=internal） |
+| `dist/PolyXRD-RutAna/`（注册版 onedir，安装包载荷） | 251 MB | PYZ 1585 项：含 4 个 vendor 模块 + `rutana.gui.registration` + `rutana.edition`；无 runtime_hook（registered 默认版次） |
+| `dist/PolyXRD-RutAna-v1.6.0-Setup.exe`（Inno Setup 6 安装包） | 66.9 MB | ISCC `/DAPP_VER=v1.6.0` 编译成功（lzma2/max + Solid），仍是 3 条无害中文语言包 Warning |
+
+构建前把已存在的 `dist/PolyXRD-RutAna` 改名让位为
+`dist/_old_v150_onedir_<时间戳>`（沙箱批量删除保护会拦截 PyInstaller 清理旧目录）。

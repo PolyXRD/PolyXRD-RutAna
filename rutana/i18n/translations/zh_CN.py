@@ -109,7 +109,7 @@ TRANSLATIONS: dict[str, str] = {
     # ---- 文件对话框 ----
     "dlg.open_pattern": "打开谱图文件",
     "dlg.add_folder": "选择谱图文件夹",
-    "filter.pattern": "谱图 (*.xy *.txt *.dat *.csv);;全部 (*.*)",
+    "filter.pattern": "谱图 (*.xy *.txt *.dat *.csv *.raw *.org *.rsm *.rbg *.rk1 *.rax *.rlz *.rfi *.mdi *.gsas *.gss *.gsa *.gda *.fxye *.ras *.rasx *.xye *.qye *.chi *.qchi *.xrdml *.xml *.brml *.json *.smz);;全部 (*.*)",
     "dlg.export_html": "导出 HTML 报告",
     "dlg.export_csv": "导出 CSV 数据",
     "dlg.export_png": "导出谱图 PNG",

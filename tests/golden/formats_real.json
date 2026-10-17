@@ -1,0 +1,50 @@
+{
+  "shimadzu_raw": {
+    "path": "Shimadzu Data/Std/Si/Si.RAW",
+    "num_points": 5751,
+    "two_theta_start": 25.0,
+    "two_theta_end": 140.0,
+    "peak_two_theta": 28.38,
+    "peak_intensity": 5232.0
+  },
+  "shimadzu_org": {
+    "path": "Shimadzu Data/Std/Si/Si.ORG",
+    "num_points": 5751,
+    "two_theta_start": 25.0,
+    "two_theta_end": 140.0,
+    "peak_two_theta": 28.38,
+    "peak_intensity": 5232.0
+  },
+  "rigaku_raw": {
+    "path": "csuHJW/data001：TiO2双相.raw",
+    "num_points": 3500,
+    "two_theta_start": 10.0,
+    "two_theta_end": 79.98,
+    "peak_two_theta": 25.26,
+    "peak_intensity": 8217.0
+  },
+  "scintag_raw2": {
+    "path": "IUCr/BAUXITE.RAW",
+    "num_points": 7251,
+    "two_theta_start": 5.0,
+    "two_theta_end": 150.0,
+    "peak_two_theta": 18.3,
+    "peak_intensity": 5580.0
+  },
+  "mdi": {
+    "path": "IUCr/BAUXITE.mdi",
+    "num_points": 7250,
+    "two_theta_start": 5.02,
+    "two_theta_end": 150.0,
+    "peak_two_theta": 18.3,
+    "peak_intensity": 5580.0
+  },
+  "gsas": {
+    "path": "IUCr/gsas/bauxite.gss",
+    "num_points": 7251,
+    "two_theta_start": 5.0,
+    "two_theta_end": 150.0,
+    "peak_two_theta": 18.3,
+    "peak_intensity": 5580.0
+  }
+}

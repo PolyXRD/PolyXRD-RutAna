@@ -38,7 +38,7 @@ from rutana.gui.busy import BusyDialog, fmt_elapsed  # noqa: E402
 from rutana.gui.dialogs import AboutDialog, CopyrightDialog  # noqa: E402
 from rutana.gui.khelp import KHelpDialog  # noqa: E402
 from rutana.gui.kwizard import KCalibWizardDialog  # noqa: E402
-from rutana.gui.main_window import MainWindow  # noqa: E402
+from rutana.gui.main_window import MainWindow, PATTERN_EXTS  # noqa: E402
 from rutana.gui.workers import ComputeThread, call_with_extras, supports_param  # noqa: E402
 from rutana.i18n import current_language, set_language, tr  # noqa: E402
 from rutana.version import __version__  # noqa: E402
@@ -282,9 +282,28 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_150():
-    """版本号已推进到 1.5.0（UI 版本号与 EXE/安装包名同源）。"""
-    assert __version__ == "1.5.0"
+def test_version_is_160():
+    """版本号已推进到 1.6.0（UI 版本号与 EXE/安装包名同源）。"""
+    assert __version__ == "1.6.0"
+
+
+def test_v160_pattern_extensions_in_folder_scan_and_filters():
+    """v1.6.0 新扩展名在添加文件夹与三语打开筛选器中口径完全一致。"""
+    expected = {
+        ".xy", ".txt", ".dat", ".csv", ".raw", ".org", ".rsm", ".rbg",
+        ".rk1", ".rax", ".rlz", ".rfi", ".mdi", ".gsas", ".gss", ".gsa",
+        ".gda", ".fxye", ".ras", ".rasx", ".xye", ".qye", ".chi", ".qchi",
+        ".xrdml", ".xml", ".brml", ".json", ".smz",
+    }
+    assert set(PATTERN_EXTS) == expected
+    try:
+        for lang in ("zh_CN", "en_US", "ja_JP"):
+            set_language(lang)
+            file_filter = tr("filter.pattern")
+            for ext in expected:
+                assert f"*{ext}" in file_filter, f"{lang} 筛选器缺 {ext}"
+    finally:
+        set_language("zh_CN")
 
 
 # --------------------------------------------------------------------------- #

@@ -109,7 +109,7 @@ TRANSLATIONS: dict[str, str] = {
     # ---- ファイルダイアログ ----
     "dlg.open_pattern": "パターンファイルを開く",
     "dlg.add_folder": "パターンのフォルダーを選択",
-    "filter.pattern": "パターン (*.xy *.txt *.dat *.csv);;すべてのファイル (*.*)",
+    "filter.pattern": "パターン (*.xy *.txt *.dat *.csv *.raw *.org *.rsm *.rbg *.rk1 *.rax *.rlz *.rfi *.mdi *.gsas *.gss *.gsa *.gda *.fxye *.ras *.rasx *.xye *.qye *.chi *.qchi *.xrdml *.xml *.brml *.json *.smz);;すべてのファイル (*.*)",
     "dlg.export_html": "HTML レポートを出力",
     "dlg.export_csv": "CSV データを出力",
     "dlg.export_png": "パターン PNG を出力",

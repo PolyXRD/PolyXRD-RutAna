@@ -16,9 +16,23 @@ from pathlib import Path
 import numpy as np
 
 from rutana.core.dtypes import Pattern
+from rutana.core.vendor.text_formats import (
+    ANODE_WAVELENGTHS,
+    DataFormatError,
+    detect_format as detect_vendor_format,
+    load_pattern as load_vendor_pattern,
+    wavelength_from_text,
+)
 
-# 本卡支持的两列文本格式；.ras/.raw/.uxd 等二进制格式留待后续任务卡
-SUPPORTED_EXTS = {".xy", ".txt", ".dat", ".csv"}
+# 既有四种文本格式保持 v1.5.0 黄金行为；其余格式由本地 vendored reader 读取。
+_LEGACY_TEXT_EXTS = {".xy", ".txt", ".dat", ".csv"}
+_RAW_EXTS = {".raw", ".org", ".rsm", ".rbg", ".rk1", ".rax", ".rlz", ".rfi"}
+_BINARY_CONTAINER_EXTS = {".rasx", ".brml"}
+SUPPORTED_EXTS = _LEGACY_TEXT_EXTS | _RAW_EXTS | {
+    ".mdi", ".gsas", ".gss", ".gsa", ".gda", ".fxye", ".ras", ".rasx",
+    ".xye", ".qye", ".chi", ".qchi", ".xrdml", ".xml", ".brml", ".json",
+    ".smz",
+}
 
 # FullProf pd 格式：数据块起始标记与常见列名
 PD_LOOP_TOKEN = "loop_"
@@ -133,27 +147,128 @@ def _parse_pd(text: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def load_pattern(path: str | Path) -> Pattern:
-    """读取谱图文本，自动识别 FullProf pd 格式与普通两列格式。
+    """读取受支持谱图，保留既有文本黄金行为并调度 vendored reader。
 
-    支持：UTF-8 BOM、首个非数值行（如岛津导出的 `?`）、FullProf pd。
-    未知扩展名抛 NotImplementedError；行解析失败抛 ValueError。
+    ``.xy/.txt/.dat/.csv`` 仍优先使用 v1.5.0 的 pd/两列解析器；只有文件头
+    明确命中新格式，或旧解析器确认没有数据点时，才交给 vendored reader。
+    未知扩展名仍抛固定文案的 :class:`NotImplementedError`。
     """
     p = Path(path)
     ext = p.suffix.lower()
     if ext not in SUPPORTED_EXTS:
         raise NotImplementedError(f"暂不支持的格式: {ext}")
-    text = _read_text(p)
-    if is_pd_format(text):
-        tt, ii = _parse_pd(text)
-        fmt = "pd"
-    else:
-        tt, ii = _parse_two_column(text)
-        fmt = "two_column"
-    anode = _guess_anode(text)
-    # source_format 保留文件扩展名（v0.1.0 契约）；layout 标注实际文本布局
-    meta = {"path": str(p), "source_format": ext.lstrip("."),
-            "layout": fmt, "wavelength_anode": anode}
-    return Pattern(two_theta=tt, intensity=ii, meta=meta)
+
+    if ext in _LEGACY_TEXT_EXTS:
+        text = _read_text(p)
+        if is_pd_format(text):
+            tt, ii = _parse_pd(text)
+            return _legacy_pattern(p, ext, text, tt, ii, "pd")
+
+        vendor_key, _label = detect_vendor_format(p)
+        if vendor_key in {"shimadzu_txt", "jade_txt", "gsas", "fp_dat", "xrdml"}:
+            return _load_vendored(p, text=text, detected_key=vendor_key)
+
+        try:
+            tt, ii = _parse_two_column(text)
+        except ValueError as exc:
+            # 数据区损坏（例如中途缺列）保持旧异常；只有旧解析器确认根本没有
+            # 数据点时才允许更宽容/定宽的 vendored reader 再识别一次。
+            if "有效数据点不足 2 个" not in str(exc):
+                raise
+            return _load_vendored(p, text=text, detected_key=vendor_key)
+        return _legacy_pattern(p, ext, text, tt, ii, "two_column")
+
+    return _load_vendored(p)
+
+
+def _legacy_pattern(
+    path: Path,
+    ext: str,
+    text: str,
+    two_theta: np.ndarray,
+    intensity: np.ndarray,
+    layout: str,
+) -> Pattern:
+    """构造旧四格式 Pattern；字段和值保持 v1.5.0 契约。"""
+    meta = {
+        "path": str(path),
+        "source_format": ext.lstrip("."),
+        "layout": layout,
+        "wavelength_anode": _guess_anode(text),
+    }
+    return Pattern(two_theta=two_theta, intensity=intensity, meta=meta)
+
+
+def _load_vendored(
+    path: Path,
+    *,
+    text: str | None = None,
+    detected_key: str | None = None,
+) -> Pattern:
+    """读取新格式的 XRDData，并转换成 RutAna 的不可变 Pattern。"""
+    try:
+        key = detected_key or detect_vendor_format(path)[0]
+        data = load_vendor_pattern(path)
+    except MemoryError as exc:
+        raise ValueError(f"谱图文件过大，内存不足，无法读取: {path}") from exc
+    except (OSError, DataFormatError, ValueError):
+        raise
+    except Exception as exc:  # 边界统一成 GUI 可汇总展示的中文错误
+        raise ValueError(f"谱图格式解析失败: {path.name}（{exc}）") from exc
+
+    vendor_meta = dict(data.metadata)
+    if key == "raw" and not bool(vendor_meta.get("axis_confident", True)):
+        variant = vendor_meta.get("raw_variant", "未知 RAW 变体")
+        raise ValueError(
+            f"RAW 角度轴不可信（{variant}）：请先在仪器软件中导出为文本格式后再打开"
+        )
+
+    if text is None and path.suffix.lower() not in (_RAW_EXTS | _BINARY_CONTAINER_EXTS):
+        try:
+            text = _read_text(path)
+        except (OSError, UnicodeError):
+            text = ""
+    anode = _vendor_anode(text or "", data.wavelength, vendor_meta)
+    format_key = str(vendor_meta.get("format") or key)
+    meta = dict(vendor_meta)
+    meta.update({
+        "path": str(path),
+        "source_format": path.suffix.lower().lstrip("."),
+        "layout": format_key,
+        "wavelength_anode": anode,
+        "format_key": format_key,
+        "raw_variant": vendor_meta.get("raw_variant"),
+        "num_points": int(data.two_theta.size),
+    })
+    if data.wavelength is not None:
+        meta.setdefault("wavelength", float(data.wavelength))
+    return Pattern(two_theta=data.two_theta, intensity=data.intensity, meta=meta)
+
+
+def _vendor_anode(text: str, wavelength: float | None, meta: dict) -> str | None:
+    """优先按 vendor 头信息推断靶材，失败后沿用旧文本猜测。"""
+    raw_anode = str(meta.get("anode") or "").strip()
+    if raw_anode:
+        return raw_anode.title()
+
+    inferred_wavelength = wavelength_from_text(text) if text else None
+    if inferred_wavelength is not None:
+        for symbol, candidate in ANODE_WAVELENGTHS.items():
+            if abs(candidate - inferred_wavelength) <= 1e-5:
+                return symbol.title()
+
+    guessed = _guess_anode(text)
+    if guessed is not None:
+        return guessed
+
+    # 二进制 RAW/显式 JSON 没有可查文本头时，才用解析器返回的波长反查。
+    if wavelength is not None and (
+        meta.get("wavelength") is not None or meta.get("format") == "json"
+    ):
+        for symbol, candidate in ANODE_WAVELENGTHS.items():
+            if abs(candidate - float(wavelength)) <= 1e-4:
+                return symbol.title()
+    return None
 
 
 def _guess_anode(text: str) -> str | None:
