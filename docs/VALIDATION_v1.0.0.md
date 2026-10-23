@@ -572,3 +572,66 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 
 构建前把已存在的 `dist/PolyXRD-RutAna` 改名让位为
 `dist/_old_v150_onedir_<时间戳>`（沙箱批量删除保护会拦截 PyInstaller 清理旧目录）。
+
+## v1.6.1 · 内部评估版状态栏提示居中（红色加粗）
+
+> 实施日期 2026-10-23。纯 UI 微版：只动 internal 版次的状态栏版次提示（摆放位置 /
+> 字重 / 字色）与状态栏文件文本的省略策略。算法（A 法测峰、B 法 March-Dollase）、
+> 读谱器、导出、i18n 键集、注册机制（registered 版次）零改动。
+
+### 改动对照
+
+| 项 | v1.6.0 | v1.6.1 |
+| --- | --- | --- |
+| 位置 | 状态栏最右侧（永久控件右端，`AlignRight` 观感） | **状态栏水平居中**（文本中心=栏宽/2） |
+| 字重 | 常规 | **加粗**（`font.setBold(True)`） |
+| 字色 | 默认前景灰 | **#C00000 红**（`INTERNAL_NOTICE_COLOR`） |
+| 字号 | 状态栏默认 | 不变（有断言：与 `statusBar().font()` 点数一致） |
+| 文件路径 | 全量贴出，长路径会挤压右侧 | 超栏宽 30% 中段省略（`…`），完整路径进 tooltip |
+
+### 为什么不是一句 `setAlignment(Qt.AlignCenter)` 就够
+
+状态栏布局 = 左信息区（语言 / 文件）+ 永久控件区。`addPermanentWidget(..., 1)`
+只能让提示在**剩余区**居中，而剩余区被左侧信息区整体右推：实测 1200 宽窗口下
+文本中心在 642（右偏 42 px）；文件标签放长路径时剩余区缩到 [739, 1180]，
+文本中心漂到 959（右偏 359 px），极端情况标签被压成 0 宽直接消失。故：
+
+1. 文件标签让出 `stretch`（改 0），文本超 `FILE_STATUS_MAX_RATIO = 0.3` 栏宽时
+   中段省略 —— 既保证左侧信息区不会越过中线（否则居中在几何上无处安放），
+   也顺手修掉「长路径把状态栏撑爆」的老毛病；
+2. 版次标签仍占剩余区（stretch=1）+ `AlignCenter`，再补右侧内边距
+   `m = 2 × ((S+E)/2 − W/2)`（S/E 为标签矩形左右边、W 为栏宽），把文本中心
+   精确拉回 W/2；`m` 以「文字仍可完整绘制」为上限收口，防内容矩形被压成负宽；
+3. `resizeEvent` / `showEvent` / `retranslateUi` / 文件切换四处重算（宽度、语言
+   文案、文件路径都会改变左区宽度）。实测几何在改文案后仍是旧值，故量测前先
+   `layout().activate()` 强制跑一遍布局，否则补偿会跳变。
+
+### 实测（WA_DontShowOnScreen 真实字体渲染 + 像素扫描文字包围盒）
+
+| 窗口宽 | 文本中心 | 栏宽/2 | 偏差 |
+| --- | --- | --- | --- |
+| 1000 | 499.5 | 500 | −0.5 px |
+| 1200 | 599.5 | 600 | −0.5 px |
+| 1600 | 799.5 | 800 | −0.5 px |
+| 1200（长路径省略后） | 599.5 | 600 | −0.5 px |
+
+证据图：`docs/evidence/10_statusbar_internal.png`（已按新版重拍，1200×20 状态栏
+局部，红色加粗提示居中）。
+
+### 测试（v1.6.0 基线 262 项，只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest tests/` | **263 项：262 passed + 1 skipped**（净增 1；唯一 skip 仍是 `test_forward.py` 的 SynthPattern oracle 依赖） |
+| `test_internal_edition_label_style`（新增） | `AlignHCenter`、加粗、`#C00000`、字号=状态栏默认、空/长路径/1000·1200·1600 三种宽度下文本中心与栏宽/2 偏差 ≤2 px、长路径中段省略且 tooltip 保留全路径 |
+| `test_version_is_160` → `test_version_is_161` | 版本断言随 `rutana/version.py` 推进到 1.6.1（两处：gui_smoke / i18n） |
+
+### 构建产物（仅本地内部评估版；未建 Setup、未上传 Release）
+
+| 产物 | 大小 | 佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.6.1.exe`（内部评估版 onefile，附固定名副本 `dist/PolyXRD-RutAna.exe`） | 110,363,715 B（105.3 MB，MD5 `bedc9787a7ff5c841b006c616f141c2c`） | CArchive 顶层 TOC 544 项；PYZ 1645 项含 `rutana.gui.main_window`（反编译常量命中 `editionStatusLabel`）、**不含** `rutana.gui.registration`（excludes 生效）、含 `rthook_internal`（运行期版次=internal） |
+| 启动冒烟 | — | 直接双击启动正常：20 s 内进程常驻（~112 MB），日志无 traceback，随后手动结束进程 |
+
+> 按用户要求：源码已同步 GitHub；二进制**只保留本地**，本次不建 tag、不发 GitHub Release。
+> 另：`resources/splash-screen.png` 已按 1.6.1 重新烙版本号（`tools/build_artwork.py`）。

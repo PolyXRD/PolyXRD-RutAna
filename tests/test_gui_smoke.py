@@ -282,9 +282,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_160():
-    """版本号已推进到 1.6.0（UI 版本号与 EXE/安装包名同源）。"""
-    assert __version__ == "1.6.0"
+def test_version_is_161():
+    """版本号已推进到 1.6.1（UI 版本号与 EXE/安装包名同源）。"""
+    assert __version__ == "1.6.1"
 
 
 def test_v160_pattern_extensions_in_folder_scan_and_filters():
@@ -328,6 +328,51 @@ def test_internal_edition_has_no_registration(qapp, stub_core, monkeypatch, tmp_
         assert w.lbl_edition.text() == "内部评估版本"
         texts = [a.text() for a in w.menu_help.actions()]
         assert all("注册" not in t for t in texts), f"帮助菜单不应含注册项: {texts}"
+    finally:
+        w.close()
+
+
+def test_internal_edition_label_style(qapp, stub_core, monkeypatch, tmp_path):
+    """v1.6.1：内部评估版提示居中、加粗、红色，字号保持默认不调整。"""
+    monkeypatch.setattr("rutana.edition.IS_INTERNAL", True)
+    from rutana.i18n import i18n_manager
+    monkeypatch.setattr(i18n_manager, "CONFIG_PATH", tmp_path / "config.json")
+    set_language("zh_CN")
+    w = MainWindow()
+    try:
+        lbl = w.lbl_edition
+        assert lbl.alignment() & Qt.AlignHCenter, "提示应水平居中"
+        assert lbl.font().bold(), "提示应加粗"
+        assert "C00000" in lbl.styleSheet().upper(), f"提示应为红色: {lbl.styleSheet()}"
+        # 字号未调整：与状态栏默认字体点数一致
+        bar = w.statusBar()
+        assert lbl.font().pointSize() == bar.font().pointSize()
+        w.resize(1200, 800)
+        w.show()
+        qapp.processEvents()
+        assert bar.isAncestorOf(lbl)
+
+        def text_center() -> float:
+            """文本绘制中心（内容矩形中心；AlignCenter 下即文字中心）。"""
+            return lbl.x() + (lbl.width() - lbl.contentsMargins().right()) / 2
+
+        # 空文件状态：文本中心落在状态栏正中
+        assert abs(text_center() - bar.width() / 2) <= 2, (text_center(), bar.width())
+        # 长路径（超宽度上限 → 中段省略）后仍然居中，且完整路径进 tooltip
+        long_path = ("文件：D:/Project/XRD/PolyXRD-RutAna/tests/data/"
+                     "very_long_sample_name_2026_10_23_peak_list_normalized.xy")
+        w._elide_file_status(long_path)
+        w._sync_status_layout()
+        qapp.processEvents()
+        assert w.lbl_file.toolTip() == long_path
+        assert w.lbl_file.text() != long_path, "超宽路径应被省略"
+        assert "…" in w.lbl_file.text(), w.lbl_file.text()
+        assert abs(text_center() - bar.width() / 2) <= 2, (text_center(), bar.width())
+        # 缩放窗口后依然居中（补偿依赖宽度，必须随 resize 重算）
+        for width in (1000, 1600, 1200):
+            w.resize(width, 800)
+            qapp.processEvents()
+            assert abs(text_center() - bar.width() / 2) <= 2, (width, text_center())
     finally:
         w.close()
 

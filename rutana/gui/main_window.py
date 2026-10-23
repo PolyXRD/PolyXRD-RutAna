@@ -47,6 +47,13 @@ from rutana.version import APP_NAME, __version__
 
 LANG_ORDER = ("zh_CN", "en_US", "ja_JP")
 
+#: 内部评估版状态栏提示的字色（醒目红，状态栏灰底上对比度足够）
+INTERNAL_NOTICE_COLOR = "#C00000"
+
+#: 状态栏「语言/文件」信息区占状态栏宽度的上限（超出则中段省略路径）。
+#: 取 0.3：为居中的版次提示留出「越过中线的余量」，否则文本在几何上无处安放
+FILE_STATUS_MAX_RATIO = 0.3
+
 #: 「添加文件夹…」用的谱图扩展名（与 filter.pattern 的口径一致）
 PATTERN_EXTS = (
     ".xy", ".txt", ".dat", ".csv", ".raw", ".org", ".rsm", ".rbg",
@@ -189,18 +196,85 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
             self.setWindowIcon(QIcon(str(icon)))
 
     def _build_status(self) -> None:
-        """状态栏：左语言/文件；右侧注册单位（registered）或版次（internal）。"""
+        """状态栏：左语言/文件；中部版次提示（internal）或右侧注册单位（registered）。"""
         self.lbl_lang = QLabel(self)
         self.lbl_file = QLabel(self)
         self.statusBar().addWidget(self.lbl_lang, 0)
-        self.statusBar().addWidget(self.lbl_file, 1)
+        # v1.6.1：文件标签不再吃 stretch（空白留给居中的版次提示），
+        # 路径过长时由 _elide_file_status 中段省略，避免把居中提示挤到右侧
+        self.statusBar().addWidget(self.lbl_file, 0)
         if not edition.IS_INTERNAL and self._reg is not None:
             # 注册标签：永久控件 + stretch=1，吃掉中间空白，名称贴右端；
             # 必须在其它 addWidget 之后调用，才能排在最右侧
             self._reg.attach_status_label(self.statusBar(), self)
         else:
-            self.lbl_edition = QLabel(self)
-            self.statusBar().addPermanentWidget(self.lbl_edition, 1)
+            self._build_edition_label()
+
+    # ------------------------------------------------------------------ #
+    # 状态栏配平（internal 版次）
+    # ------------------------------------------------------------------ #
+    def _build_edition_label(self) -> None:
+        """内部评估版次提示（v1.6.1）：状态栏居中、加粗、红色，字号不调整。
+
+        ``addPermanentWidget(..., 1)`` 先让标签吃下右侧全部剩余空间，再由
+        :meth:`_sync_status_layout` 用右侧内边距补偿左侧「语言/文件」占位，
+        把文本几何中心拉回状态栏正中；字号沿用状态栏默认，只打开 ``setBold``。
+        """
+        self.lbl_edition = QLabel(self)
+        self.lbl_edition.setObjectName("editionStatusLabel")
+        self.lbl_edition.setAlignment(Qt.AlignCenter)
+        font = self.lbl_edition.font()
+        font.setBold(True)          # 只改字重，不改字号
+        self.lbl_edition.setFont(font)
+        self.lbl_edition.setStyleSheet(f"color: {INTERNAL_NOTICE_COLOR};")
+        self.statusBar().addPermanentWidget(self.lbl_edition, 1)
+
+    def _elide_file_status(self, text: str) -> None:
+        """状态栏文件/消息文本：超过宽度上限时中段省略（完整内容进 tooltip）。
+
+        上限取状态栏宽度的 :data:`FILE_STATUS_MAX_RATIO`，保证左侧信息区不会
+        长到把居中的版次提示挤偏或挤没。
+        """
+        self._file_status_full = text
+        self.lbl_file.setToolTip(text)
+        cap = max(120, int(self.statusBar().width() * FILE_STATUS_MAX_RATIO))
+        self.lbl_file.setText(
+            self.lbl_file.fontMetrics().elidedText(text, Qt.ElideMiddle, cap))
+
+    def _sync_status_layout(self) -> None:
+        """状态栏水平配平：按当前几何重算文件标签省略宽度与版次提示居中补偿。
+
+        居中补偿的推导：状态栏左侧「语言/文件」区占位使版次标签区域整体右移，
+        设标签矩形为 [S, E]、状态栏宽 W，则文本中心原在 (S+E)/2；给标签加
+        右侧内边距 m 后文本中心左移 m/2，故取 m = 2 × ((S+E)/2 - W/2) 即正中。
+        该式只依赖实测几何，不依赖 QStatusBar 内部 spacing/margin 的取值；
+        内边距再以「文字仍可完整绘制」为上限收口（防止内容矩形被压成负宽）。
+        """
+        bar = self.statusBar()
+        if getattr(self, "_file_status_full", None) is not None:
+            self._elide_file_status(self._file_status_full)
+        lbl = getattr(self, "lbl_edition", None)
+        if lbl is None or bar.width() <= 0:
+            return
+        # 文本刚改过时几何仍是旧值，先强制跑一遍布局再量（否则补偿会跳变）
+        lay = bar.layout()
+        if lay is not None:
+            lay.activate()
+        if lbl.width() <= 0:
+            return
+        need = 2 * (lbl.x() + lbl.width() / 2) - bar.width()   # 2×(中心−栏宽/2)
+        room = lbl.width() - lbl.fontMetrics().horizontalAdvance(lbl.text()) - 4
+        lbl.setContentsMargins(0, 0, max(0, min(int(need), max(0, room))), 0)
+
+    def resizeEvent(self, event) -> None:
+        """窗口尺寸变化后重新配平状态栏（居中补偿与省略宽度都依赖宽度）。"""
+        super().resizeEvent(event)
+        self._sync_status_layout()
+
+    def showEvent(self, event) -> None:
+        """首次显示后配平一次（首次 resize 早于布局，那时还量不到几何）。"""
+        super().showEvent(event)
+        self._sync_status_layout()
 
     def startup_registration(self) -> None:
         """启动注册检查（registered 版次）：未注册弹提示，已注册静默。
@@ -240,6 +314,8 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self.lbl_lang.setText(tr("status.lang", lang=tr(f"lang.{current_language()}")))
         if getattr(self, "lbl_edition", None) is not None:
             self.lbl_edition.setText(tr("status.internal_edition"))
+        # 语言/文件文案变长会改变左侧信息区宽度，重算省略与居中补偿
+        self._sync_status_layout()
 
     # ------------------------------------------------------------------ #
     # 槽：文件
@@ -326,11 +402,13 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         path = self._current_path()
         if path is None:
             self.canvas.clear()
-            self.lbl_file.setText(tr("status.ready"))
+            self._elide_file_status(tr("status.ready"))
+            self._sync_status_layout()
             return
         pat = self._patterns[path]
         self.canvas.show_pattern(np.asarray(pat.two_theta), np.asarray(pat.intensity))
-        self.lbl_file.setText(tr("status.file", path=path))
+        self._elide_file_status(tr("status.file", path=path))
+        self._sync_status_layout()
 
     def _current_path(self) -> str | None:
         row = self.file_list.currentRow()
