@@ -29,8 +29,9 @@ from rutana.i18n import tr
 #: 双平行重复性限缺省值（core 未就绪时的兜底；core 内的 DEFAULT_ABS_LIMIT 优先）
 FALLBACK_ABS_LIMIT = 0.15
 
-#: B 法 Rwp 拟合良好阈值（%）
-RWP_GOOD_LIMIT = 10.0
+# B 法 Rwp 判定阈值（v1.6.2 起四档）不在本模块维护，统一见
+# :mod:`rutana.gui.verdict`（阈值常量 + :func:`rutana.gui.verdict.rwp_verdict`），
+# 避免 service/CSV/结果卡多处各写一份 10%/15%/20%。
 
 # PROTOCOL_V100 的背景参数（docs/VALIDATION_v1.0.0.md §A.3 实证最优配置）。
 # v1.3.0 起 GUI 的 A 法测峰（K 标定向导与样品计算两条路径）统一传给 core，

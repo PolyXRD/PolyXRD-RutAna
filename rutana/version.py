@@ -1,6 +1,6 @@
 """版本与产品标识 —— 家族统一风格。"""
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 APP_NAME = "PolyXRD RutAna"
 APP_TAGLINE = "GB/T 30793—2014 锐钛型/金红石型比率测定工具"

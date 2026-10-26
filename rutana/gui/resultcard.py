@@ -3,9 +3,10 @@
 从 panels 拆出以控制单文件规模；A 法与 B 法共用同一实现，
 保证「结果好坏一眼可见」的视觉规则在全界面保持一致：
 
-- ``good`` 绿色（#16A34A）：合格 / 拟合良好；
-- ``bad`` 红色（#DC2626）：超差 / 拟合不佳；
-- ``warn`` 黄色（#CA8A04）：提示性告警（如 R² 偏低）；
+- ``good`` 绿色（#16A34A）：合格 / 拟合很好（Rwp < 10%）；
+- ``info`` 蓝色（#0284C7）：拟合良好（10% ≤ Rwp < 15%，v1.6.2 新增档）；
+- ``warn`` 黄色（#CA8A04）：拟合尚可（15% ≤ Rwp ≤ 20%）/ 提示性告警（如 R² 偏低）；
+- ``bad`` 红色（#DC2626）：超差 / 拟合不佳（Rwp > 20%）；
 - ``None`` 默认深色：中性数值。
 """
 
@@ -22,12 +23,14 @@ COLOR_GOOD = "#16A34A"
 COLOR_BAD = "#DC2626"
 COLOR_WARN = "#CA8A04"
 COLOR_MUTED = "#64748B"
+COLOR_INFO = "#0284C7"
 
 #: 语义 level -> 颜色
 LEVEL_COLORS = {
     None: COLOR_DEFAULT,
     "neutral": COLOR_DEFAULT,
     "good": COLOR_GOOD,
+    "info": COLOR_INFO,
     "bad": COLOR_BAD,
     "warn": COLOR_WARN,
     "muted": COLOR_MUTED,

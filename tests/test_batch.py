@@ -120,8 +120,9 @@ def test_export_batch_csv_method_b_autodetect(tmp_path):
     batch.export_batch_csv(rows, dest)
     lines = dest.read_text(encoding="utf-8-sig").strip().splitlines()
     assert lines[0].endswith(tr("batch.csv.verdict"))
-    assert lines[1] == f"a.xy,82.00,18.00,9.42,7.10,1.234,{tr('verdict.fit_good')}"
-    assert tr("verdict.fit_bad") in lines[2], "Rwp > 10% 应判拟合不佳"
+    # v1.6.2：9.42% < 10% → 一档「拟合很好」；25.5% > 20% → 四档「拟合不佳」
+    assert lines[1] == f"a.xy,82.00,18.00,9.42,7.10,1.234,{tr('verdict.fit_very_good')}"
+    assert tr("verdict.fit_bad") in lines[2], "Rwp > 20% 应判拟合不佳"
     assert "boom" in lines[3], "失败行把原因写进判定列"
 
 
@@ -323,7 +324,7 @@ def test_run_method_b_batch_real_pd(tmp_path):
     assert raw.startswith(b"\xef\xbb\xbf"), "带 UTF-8 BOM"
     text = raw.decode("utf-8-sig")
     assert "18%实测谱.txt" in text and "36%实测谱.txt" in text
-    assert tr("verdict.fit_good") in text
+    assert tr("verdict.fit_very_good") in text   # v1.6.2：Rwp=9.42% < 10%
 
 
 def test_run_method_b_batch_failure_row(monkeypatch):

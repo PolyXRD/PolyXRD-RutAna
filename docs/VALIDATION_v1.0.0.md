@@ -635,3 +635,57 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 
 > 按用户要求：源码已同步 GitHub；二进制**只保留本地**，本次不建 tag、不发 GitHub Release。
 > 另：`resources/splash-screen.png` 已按 1.6.1 重新烙版本号（`tools/build_artwork.py`）。
+
+## v1.6.2 · B 法 Rwp 结果判定细分四档
+
+> 实施日期 2026-10-26。算法（A 法测峰 / B 法 Hill–Howard 定量 / 择优取向）、
+> 读谱器、注册机制零改动；只改 **Rwp 判定口径**与其配色，并把阈值收口到单一出处。
+
+### 判定口径（用户口径）
+
+| 档位 | Rwp 区间 | 判定文案（中 / EN / JP） | 结果卡配色 |
+| --- | --- | --- | --- |
+| 一档 | Rwp < 10% | 拟合很好 / Excellent fit / 非常に良いフィット | 绿 `#16A34A`（`good`） |
+| 二档 | 10% ≤ Rwp < 15% | 拟合良好 / Good fit / 良好なフィット | 蓝 `#0284C7`（`info`，v1.6.2 新增等级） |
+| 三档 | 15% ≤ Rwp ≤ 20% | 拟合尚可 / Acceptable fit / まずまずのフィット | 琥珀 `#CA8A04`（`warn`） |
+| 四档 | Rwp > 20% | 拟合不佳 / Poor fit / 不良なフィット | 红 `#DC2626`（`bad`） |
+
+边界归并规则（用户原话「高于 15% 低于 20%」「大于 20%」存在开区间空档，故显式定死）：
+**恰好 10.0% 归二档**（一档要求严格小于）、**15.0% 与 20.0% 归三档**（三档上界取闭区间，
+四档要求严格大于 20%）。
+
+### 实现
+
+- 新增 `rutana/gui/verdict.py`：阈值 `RWP_VERY_GOOD_LIMIT=10 / RWP_GOOD_LIMIT=15 /
+  RWP_FAIR_LIMIT=20` 与 `rwp_verdict(rwp) -> (i18n 键, 配色等级)`，**唯一出处**；
+  该模块不 import PySide6，可无界面单测。
+- 三处调用点全部改为调用它（原先各处硬写 `10.0` 或 `services.RWP_GOOD_LIMIT`）：
+  - `rutana/gui/panels_b.py::set_rfactors`（结果卡文本 + Rwp 行/判定行同色）；
+  - `rutana/gui/tasks.py`（单样本 `_apply_b_result` + 批量 `_apply_b_row` 的 `_last_b["verdict"]`）；
+  - `rutana/gui/batch.py::_csv_row`（批量 CSV 判定列；rwp 缺失时退回「—」）。
+- `services.RWP_GOOD_LIMIT` 常量删除（改为注释指向 verdict 模块），避免两处阈值漂移。
+- `rutana/gui/resultcard.py` 新增 `COLOR_INFO = "#0284C7"` 与 `LEVEL_COLORS["info"]`。
+- i18n 三语新增 `verdict.fit_very_good` / `verdict.fit_fair`，`verdict.fit_good` /
+  `verdict.fit_bad` 文案改为区间口径（不再是 ≤10% / >10%）。
+
+### 测试（v1.6.1 基线 263 项，只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest tests/` | **282 项：281 passed + 1 skipped**（净增 19；唯一 skip 仍是 `test_forward.py` 的 SynthPattern oracle 依赖） |
+| `tests/test_verdict.py`（新增 19 项） | 阈值断言；12 组区间/边界参数化（0、2.13、9.99、**10.0**、12.5、14.99、**15.0**、18、**20.0**、20.01、25.5、99）；配色等级均存在于结果卡调色板且四色互异；三语文案齐备且旧「≤10%」口径已清除；B 面板 `set_rfactors` 四档文本 + 颜色（含 Rwp 行同色） |
+| `tests/test_gui_smoke.py`（改 3 处） | 8.42% 由「拟合良好」改为「拟合很好」；25.5% 仍「拟合不佳」；批量 CSV 9.42% → 「拟合很好」；版本断言 `test_version_is_162` |
+| `tests/test_batch.py`（改 2 处） | B 法 CSV：9.42% → 「拟合很好」、25.5% → 「拟合不佳」；批量落盘断言同步 |
+| `tests/test_i18n.py`（改 2 处） | 版本断言 1.6.2；`V1_REQUIRED_KEYS` 补 `verdict.fit_very_good` / `verdict.fit_fair` |
+
+证据图：`docs/evidence/14_verdict_tiers.png`（四档并排，8.42 / 12.00 / 18.00 / 25.50%，
+绿-蓝-琥珀-红 + 文案）。
+
+### 构建产物（仅本地内部评估版；未建 Setup、未上传 Release）
+
+| 产物 | 大小 | 佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.6.2.exe`（内部评估版 onefile，附固定名副本 `dist/PolyXRD-RutAna.exe`） | 110,365,805 B（105.3 MB，MD5 `7cfd4ac6fa3c5b62ce7bd15a2cb4228c`） | CArchive 顶层 TOC 544 项；PYZ **1646** 项（v1.6.1 为 1645，多出 `rutana.gui.verdict`）、**不含** `rutana.gui.registration`（excludes 生效）、含 `rthook_internal`（运行期版次=internal） |
+| 启动冒烟 | — | 双击启动正常：18 s 内进程常驻（~112 MB），日志无 traceback，随后手动结束进程 |
+
+> 与 v1.6.1 相同口径：源码 push GitHub，二进制只留本地，不建 tag、不发 Release。

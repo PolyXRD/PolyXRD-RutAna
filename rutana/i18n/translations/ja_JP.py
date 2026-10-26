@@ -221,8 +221,11 @@ TRANSLATIONS: dict[str, str] = {
     "result.b_wr": "w(ルチル) / %（方法 B）",
     "result.fit_verdict": "フィット判定",
     "result.b_po": "優先配向 r（anatase/金紅石）",
-    "verdict.fit_good": "良好なフィット（Rwp ≤ 10%）",
-    "verdict.fit_bad": "不良なフィット（Rwp > 10%）",
+    # v1.6.2：Rwp 4 段階判定（しきい値は rutana/gui/verdict.py）
+    "verdict.fit_very_good": "非常に良いフィット（Rwp < 10%）",
+    "verdict.fit_good": "良好なフィット（10% ≤ Rwp < 15%）",
+    "verdict.fit_fair": "まずまずのフィット（15% ≤ Rwp ≤ 20%）",
+    "verdict.fit_bad": "不良なフィット（Rwp > 20%）",
     "status.computing": "計算中…",
     # ---- v1.2.0：一括計算 ----
     "a.batch": "一括計算…",

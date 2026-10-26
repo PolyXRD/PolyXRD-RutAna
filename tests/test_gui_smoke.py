@@ -282,9 +282,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_161():
-    """版本号已推进到 1.6.1（UI 版本号与 EXE/安装包名同源）。"""
-    assert __version__ == "1.6.1"
+def test_version_is_162():
+    """版本号已推进到 1.6.2（UI 版本号与 EXE/安装包名同源）。"""
+    assert __version__ == "1.6.2"
 
 
 def test_v160_pattern_extensions_in_folder_scan_and_filters():
@@ -667,14 +667,15 @@ def test_run_task_b_updates_rfactors(qapp, stub_core, no_modal_exec):
         assert card.value("result.rwp") == "8.42"
         assert card.value("result.rp") == "6.10"
         assert card.value("result.chi2") == "1.234"
-        assert card.value("result.fit_verdict") == tr("verdict.fit_good")
+        # v1.6.2：Rwp=8.42% < 10% → 一档「拟合很好」
+        assert card.value("result.fit_verdict") == tr("verdict.fit_very_good")
         assert w.tabs.b_panel.btn_run.isEnabled(), "跑完应恢复可用"
-        assert w._last_b is not None and w._last_b["verdict"] == tr("verdict.fit_good")
+        assert w._last_b is not None and             w._last_b["verdict"] == tr("verdict.fit_very_good")
         assert w._last_b["rows"][0] == (tr("result.b_wa"), "48.00")
         assert w._last_b["rows"][1] == (tr("result.b_wr"), "52.00")
         assert seen and "progress_cb" in seen[0], "应向 core 注入进度回调"
 
-        # Rwp > 10% -> 红色「拟合不佳」；无定量结果时显示「—」
+        # v1.6.2：Rwp=25.5% > 20% -> 四档「拟合不佳」；无定量结果时显示「—」
         def fake_bad(pat, **kwargs):
             tt = np.asarray(pat.two_theta)
             ycalc = np.asarray(pat.intensity) * 0.80
@@ -994,7 +995,8 @@ def test_run_task_b_batch_writes_csv_and_pngs(qapp, stub_core, tmp_path):
             assert _pump_until(lambda: (folder / "18.png").exists(), timeout=8.0)
         assert (folder / "36.png").exists(), "每个成功文件都要出 PNG"
         text = (folder / "pd.csv").read_text(encoding="utf-8-sig")
-        assert tr("verdict.fit_good") in text
+        # v1.6.2：Rwp=9.42% < 10% → 一档「拟合很好」
+        assert tr("verdict.fit_very_good") in text
         assert _pump_until(
             lambda: w.tabs.b_panel.card_b.value("result.b_wr") == "36.00")
         assert w.canvas._fit is not None, "画布应显示首个文件的精修谱"

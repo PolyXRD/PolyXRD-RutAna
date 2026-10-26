@@ -221,8 +221,11 @@ TRANSLATIONS: dict[str, str] = {
     "result.b_wr": "w(rutile) / % (Method B)",
     "result.fit_verdict": "Fit verdict",
     "result.b_po": "PO r (anatase/rutile)",
-    "verdict.fit_good": "Good fit (Rwp ≤ 10%)",
-    "verdict.fit_bad": "Poor fit (Rwp > 10%)",
+    # v1.6.2: four-tier Rwp verdict (thresholds: rutana/gui/verdict.py)
+    "verdict.fit_very_good": "Excellent fit (Rwp < 10%)",
+    "verdict.fit_good": "Good fit (10% ≤ Rwp < 15%)",
+    "verdict.fit_fair": "Acceptable fit (15% ≤ Rwp ≤ 20%)",
+    "verdict.fit_bad": "Poor fit (Rwp > 20%)",
     "status.computing": "Computing…",
     # ---- v1.2.0: batch computation ----
     "a.batch": "Batch compute…",

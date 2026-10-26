@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from rutana.gui import services
+from rutana.gui.verdict import rwp_verdict
 from rutana.i18n import tr
 from rutana.i18n.translations import en_US, ja_JP, zh_CN
 
@@ -271,9 +272,10 @@ def _csv_row(row: dict, method: str) -> list[str]:
         if not row.get("ok"):
             verdict = str(row.get("message") or "")
         else:
-            good = row.get("rwp") is not None and \
-                float(row["rwp"]) <= services.RWP_GOOD_LIMIT
-            verdict = tr("verdict.fit_good" if good else "verdict.fit_bad")
+            # 四档判定口径统一见 rutana.gui.verdict（v1.6.2）
+            rwp = row.get("rwp")
+            verdict = tr("verdict.na" if rwp is None
+                         else rwp_verdict(float(rwp))[0])
         return [_file_name(row["path"]), _fmt(row.get("wa"), ".2f"),
                 _fmt(row.get("wr"), ".2f"), _fmt(row.get("rwp"), ".2f"),
                 _fmt(row.get("rp"), ".2f"), _fmt(row.get("chi2"), ".3f"), verdict]

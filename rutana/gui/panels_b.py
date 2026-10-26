@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from rutana.gui.resultcard import ResultCard
+from rutana.gui.verdict import rwp_verdict
 from rutana.i18n import tr
 
 #: 附加 CIF 路径存放在 QListWidgetItem 的 UserRole
@@ -146,14 +147,15 @@ class BPanel(QWidget):
                               f"{wr:.2f}" if wr is not None else tr("verdict.na"))
 
     def set_rfactors(self, rwp: float, rp: float, chi2: float) -> None:
-        """回填 R 因子；Rwp ≤ 10% 判绿（拟合良好），否则判红。"""
-        self.card_b.set_value("result.rwp", f"{rwp:.2f}",
-                              "good" if rwp <= 10.0 else "bad")
+        """回填 R 因子；判定按 v1.6.2 四档口径（见 :mod:`rutana.gui.verdict`）。
+
+        很好 → 绿、良好 → 蓝、尚可 → 琥珀、不佳 → 红；Rwp 行与「拟合判定」行同色。
+        """
+        key, level = rwp_verdict(rwp)
+        self.card_b.set_value("result.rwp", f"{rwp:.2f}", level)
         self.card_b.set_value("result.rp", f"{rp:.2f}")
         self.card_b.set_value("result.chi2", f"{chi2:.3f}")
-        key = "verdict.fit_good" if rwp <= 10.0 else "verdict.fit_bad"
-        self.card_b.set_value("result.fit_verdict", tr(key),
-                              "good" if rwp <= 10.0 else "bad")
+        self.card_b.set_value("result.fit_verdict", tr(key), level)
 
     def set_po(self, ra: float | None, rr: float | None) -> None:
         """回填择优取向 r（锐钛/金红石）；缺失（未精修或无结果）显示「—」。"""

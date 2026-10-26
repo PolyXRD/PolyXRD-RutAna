@@ -43,7 +43,8 @@ V1_REQUIRED_KEYS = (
     "a.k_help", "a.k_wizard", "a.k.source_manual", "a.k.source_calib",
     "a.ref_enable", "result.ia_ir", "result.r2", "result.ref_label",
     "result.ref_err", "result.fit_verdict",
-    "verdict.fit_good", "verdict.fit_bad",
+    "verdict.fit_very_good", "verdict.fit_good", "verdict.fit_fair",
+    "verdict.fit_bad",
 )
 
 
@@ -88,9 +89,9 @@ def test_placeholders_consistent():
             f"{key} 占位符在三语中不一致: {names}")
 
 
-def test_version_is_161():
+def test_version_is_162():
     """版本号与 rutana/version.py 同源推进（UI/EXE/安装包统一取这里）。"""
-    assert __version__ == "1.6.1"
+    assert __version__ == "1.6.2"
 
 
 def test_all_code_keys_defined_in_all_languages():

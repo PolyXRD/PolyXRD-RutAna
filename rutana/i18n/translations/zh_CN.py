@@ -221,8 +221,11 @@ TRANSLATIONS: dict[str, str] = {
     "result.b_wr": "w(金红石型) / %（B 法）",
     "result.fit_verdict": "拟合判定",
     "result.b_po": "择优取向 r（锐钛/金红石）",
-    "verdict.fit_good": "拟合良好（Rwp ≤ 10%）",
-    "verdict.fit_bad": "拟合不佳（Rwp > 10%）",
+    # v1.6.2：Rwp 四档判定（阈值见 rutana/gui/verdict.py）
+    "verdict.fit_very_good": "拟合很好（Rwp < 10%）",
+    "verdict.fit_good": "拟合良好（10% ≤ Rwp < 15%）",
+    "verdict.fit_fair": "拟合尚可（15% ≤ Rwp ≤ 20%）",
+    "verdict.fit_bad": "拟合不佳（Rwp > 20%）",
     "status.computing": "正在计算…",
     # ---- v1.2.0：批量计算 ----
     "a.batch": "批量计算…",

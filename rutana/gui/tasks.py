@@ -26,6 +26,7 @@ import numpy as np
 
 from rutana.gui import batch, services
 from rutana.gui.exports import a_rows
+from rutana.gui.verdict import rwp_verdict
 from rutana.gui.workers import run_busy_task
 from rutana.i18n import tr
 
@@ -225,8 +226,7 @@ class TaskMixin:
                                  np.asarray(fit["yobs"]),
                                  np.asarray(fit["ycalc"]),
                                  np.asarray(fit["diff"]))
-        good = row["rwp"] <= services.RWP_GOOD_LIMIT
-        verdict = tr("verdict.fit_good" if good else "verdict.fit_bad")
+        verdict = tr(rwp_verdict(row["rwp"])[0])   # v1.6.2 四档口径
         self._last_b = {
             "sample": row["sample"], "file": row["path"],
             "rows": [(tr("result.b_wa"),
@@ -266,6 +266,7 @@ class TaskMixin:
     def _apply_b_result(self, data: dict) -> None:
         """B 法结果回填面板、画布与导出汇总。"""
         rf = data["result"].rf
+        verdict_key = rwp_verdict(rf.rwp)[0]   # v1.6.2 四档口径
         self.tabs.b_panel.set_rfactors(rf.rwp, rf.rp, rf.chi2)
         wa, wr = data.get("wa"), data.get("wr")
         self.tabs.b_panel.set_quantities(
@@ -286,11 +287,10 @@ class TaskMixin:
                 (tr("result.rwp"), f"{rf.rwp:.2f}"),
                 (tr("result.rp"), f"{rf.rp:.2f}"),
                 (tr("result.chi2"), f"{rf.chi2:.3f}"),
-                (tr("result.fit_verdict"),
-                 tr("verdict.fit_good" if rf.rwp <= 10.0 else "verdict.fit_bad")),
+                (tr("result.fit_verdict"), tr(verdict_key)),
                 (tr("result.b_po"), _po_text(data.get("po_r"))),
             ],
-            "verdict": tr("verdict.fit_good" if rf.rwp <= 10.0 else "verdict.fit_bad"),
+            "verdict": tr(verdict_key),
         }
 
     def run_task_b_batch(self):
