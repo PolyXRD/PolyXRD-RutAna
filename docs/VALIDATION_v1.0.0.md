@@ -692,3 +692,8 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 
 发布：tag `v1.6.2` + GitHub Release（私有库，两个版次资产都上传）。构建前把上一版
 `dist/PolyXRD-RutAna` 改名让位为 `dist/_old_v160_onedir_<时间戳>`。
+
+> 本地留存（2026-10-26 清理后）：`dist/` 只保留 `PolyXRD-RutAna-v1.6.2.exe`、
+> `PolyXRD-RutAna-v1.6.2-Setup.exe` 与注册版 onedir `dist/PolyXRD-RutAna/`；
+> v1.4.0–v1.6.1 的旧二进制、`_old_*onedir*` 备份与固定名副本 `PolyXRD-RutAna.exe`
+> 已由用户手动删除（Release 资产仍在 GitHub，历史二进制不受影响）。
