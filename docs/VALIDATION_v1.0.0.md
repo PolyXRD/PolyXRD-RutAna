@@ -681,11 +681,14 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 证据图：`docs/evidence/14_verdict_tiers.png`（四档并排，8.42 / 12.00 / 18.00 / 25.50%，
 绿-蓝-琥珀-红 + 文案）。
 
-### 构建产物（仅本地内部评估版；未建 Setup、未上传 Release）
+### 构建产物（v1.6.2 正式发版：双版次）
 
 | 产物 | 大小 | 佐证 |
 | --- | --- | --- |
 | `dist/PolyXRD-RutAna-v1.6.2.exe`（内部评估版 onefile，附固定名副本 `dist/PolyXRD-RutAna.exe`） | 110,365,805 B（105.3 MB，MD5 `7cfd4ac6fa3c5b62ce7bd15a2cb4228c`） | CArchive 顶层 TOC 544 项；PYZ **1646** 项（v1.6.1 为 1645，多出 `rutana.gui.verdict`）、**不含** `rutana.gui.registration`（excludes 生效）、含 `rthook_internal`（运行期版次=internal） |
-| 启动冒烟 | — | 双击启动正常：18 s 内进程常驻（~112 MB），日志无 traceback，随后手动结束进程 |
+| `dist/PolyXRD-RutAna/`（注册版 onedir，安装包载荷） | 258 MB | 顶层 TOC 15 项；PYZ **1647** 项含 `rutana.gui.registration` + `rutana.gui.verdict` + `rutana.edition`，**无** runtime_hook（版次=registered） |
+| `dist/PolyXRD-RutAna-v1.6.2-Setup.exe`（Inno Setup 6 安装包） | 71,796,719 B（68.5 MB，MD5 `0dded68ab25d961a3f021c8f7169984d`） | ISCC `/DAPP_VER=v1.6.2` 编译成功（lzma2/max + Solid），ProductVersion=`v1.6.2`；8 条无害中文语言包 Warning（Inno 6 新增消息未汉化） |
+| 启动冒烟（两个版次各 1 次） | — | 内部版 18 s、注册版 20 s 内进程常驻（~112 / 117 MB），日志无 traceback，随后手动结束 |
 
-> 与 v1.6.1 相同口径：源码 push GitHub，二进制只留本地，不建 tag、不发 Release。
+发布：tag `v1.6.2` + GitHub Release（私有库，两个版次资产都上传）。构建前把上一版
+`dist/PolyXRD-RutAna` 改名让位为 `dist/_old_v160_onedir_<时间戳>`。
