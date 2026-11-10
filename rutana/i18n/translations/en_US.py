@@ -244,4 +244,17 @@ TRANSLATIONS: dict[str, str] = {
     "batch.csv.chi2": "Chi2",
     "batch.csv.verdict": "Verdict",
     "batch.csv.ok": "OK",
+    # ---- Main-peak table under the pattern (2theta, d, hkl, intensity, FWHM, Scherrer size) ----
+    "peaks.title": "Main peaks · Scherrer crystallite size",
+    "peaks.col.phase": "Phase",
+    "peaks.col.two_theta": "2θ / °",
+    "peaks.col.d": "d / Å",
+    "peaks.col.hkl": "(hkl)",
+    "peaks.col.intensity": "I / counts",
+    "peaks.col.fwhm": "FWHM / °",
+    "peaks.col.size": "Size / nm",
+    "peaks.empty": "Import a pattern to list the main peaks of anatase and rutile",
+    "peaks.note": "Crystallite size is estimated with the Scherrer equation D = Kλ/(β·cosθ) (K = 0.9, λ = {lam} Å); FWHM is not corrected for instrumental broadening, so the value is an apparent (lower-bound) size.",
+    "phase.anatase": "Anatase",
+    "phase.rutile": "Rutile",
 }

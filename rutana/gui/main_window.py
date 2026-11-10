@@ -32,6 +32,7 @@ from rutana.gui.batch import is_tool_csv
 from rutana.gui.canvas import PatternCanvas
 from rutana.gui.dialogs import AboutDialog, CopyrightDialog
 from rutana.gui.exports import ExportMixin
+from rutana.gui.peaks_panel import MainPeaksPanel
 from rutana.gui.resources import resource_path
 from rutana.gui.tabs import MethodTabs
 from rutana.gui.tasks import TaskMixin
@@ -148,7 +149,7 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
             self.act_regcode = self.menu_help.actions()[-1]
 
     def _build_central(self) -> None:
-        """三栏布局：文件列表 | 画布 | 参数/结果选项卡。"""
+        """三栏布局：文件列表 |（画布 + 主峰表）| 参数/结果选项卡。"""
         splitter = QSplitter(Qt.Horizontal, self)
 
         # 左：导入谱图
@@ -172,9 +173,20 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         lv.addWidget(self.grp_files)
         splitter.addWidget(left)
 
-        # 中：画布
-        self.canvas = PatternCanvas(self)
-        splitter.addWidget(self.canvas)
+        # 中：上画布 + 下主峰参数表（竖向可拖分割，画布默认占大头）
+        self.center_split = QSplitter(Qt.Vertical, self)
+        self.center_split.setChildrenCollapsible(False)
+        self.canvas = PatternCanvas(self.center_split)
+        self.canvas.setMinimumHeight(200)
+        self.peaks = MainPeaksPanel(self.center_split)
+        self.center_split.addWidget(self.canvas)
+        self.center_split.addWidget(self.peaks)
+        self.center_split.setStretchFactor(0, 3)
+        self.center_split.setStretchFactor(1, 2)
+        self.center_split.setSizes([420, 300])
+        # 此时分割条才有尺寸，再让主峰表按空态收窄一次（否则空态会白占半屏）
+        self.peaks.clear()
+        splitter.addWidget(self.center_split)
 
         # 右：A/B 法选项卡
         self.tabs = MethodTabs(self)
@@ -311,6 +323,7 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
         self.btn_clear.setText(tr("panel.files.clear"))
         self.tabs.retranslate()
         self.canvas.retranslate()
+        self.peaks.retranslate()
         self.lbl_lang.setText(tr("status.lang", lang=tr(f"lang.{current_language()}")))
         if getattr(self, "lbl_edition", None) is not None:
             self.lbl_edition.setText(tr("status.internal_edition"))
@@ -398,17 +411,36 @@ class MainWindow(TaskMixin, ExportMixin, QMainWindow):
             self._refresh_canvas()
 
     def _refresh_canvas(self) -> None:
-        """按当前选中项刷新画布与状态栏文件显示。"""
+        """按当前选中项刷新画布、主峰表与状态栏文件显示。"""
         path = self._current_path()
         if path is None:
             self.canvas.clear()
+            self.peaks.clear()
             self._elide_file_status(tr("status.ready"))
             self._sync_status_layout()
             return
         pat = self._patterns[path]
         self.canvas.show_pattern(np.asarray(pat.two_theta), np.asarray(pat.intensity))
+        self._refresh_peaks(pat)
         self._elide_file_status(tr("status.file", path=path))
         self._sync_status_layout()
+
+    def _refresh_peaks(self, pat) -> None:
+        """刷新谱图下方的主峰参数表。
+
+        参数表是辅助信息：core 缺失或该谱无法测峰时只清空表格，
+        绝不让它中断主流程（导入/切换谱图本身必须始终可用）。
+        """
+        if pat is None:
+            self.peaks.clear()
+            return
+        try:
+            rows = services.main_peaks(pat)
+            lam = services.pattern_wavelength(pat)
+        except Exception:  # noqa: BLE001 —— 辅助信息，失败即空态
+            self.peaks.clear()
+            return
+        self.peaks.set_rows(rows, lam)
 
     def _current_path(self) -> str | None:
         row = self.file_list.currentRow()

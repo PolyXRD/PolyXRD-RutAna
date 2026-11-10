@@ -440,3 +440,44 @@ def _builtin_cif_path():
     from rutana.gui.resources import builtin_cif_path
 
     return builtin_cif_path
+
+
+# --------------------------------------------------------------------------- #
+# 主峰参数（谱图下方常驻表：2θ / d / hkl / 强度 / 半峰宽 / 谢乐晶粒度）
+# --------------------------------------------------------------------------- #
+#: 内置两相 CIF 解析结果缓存：解析一次约十几毫秒，切换谱图时不必重复
+_PHASE_CACHE: dict[str, Any] = {}
+
+#: 内置两相（顺序即表格里的相序：锐钛矿在前）
+BUILTIN_PHASES = ("anatase", "rutile")
+
+
+def builtin_phases() -> list:
+    """内置两相的 CifStructure（anatase, rutile），带进程内缓存。"""
+    parse_cif = _core("profile.cif.parse_cif")
+    path_of = _builtin_cif_path()
+    out = []
+    for name in BUILTIN_PHASES:
+        path = str(path_of(name))
+        struct = _PHASE_CACHE.get(path)
+        if struct is None:
+            struct = parse_cif(path)
+            _PHASE_CACHE[path] = struct
+        out.append(struct)
+    return out
+
+
+def main_peaks(pat: Any, *, n: int = 5) -> list:
+    """内置两相主峰的实测参数（供谱图下方的主峰表）。
+
+    返回 ``rutana.core.phasepeak.MainPeak`` 列表：峰位/强度/半峰宽取自实测谱
+    （与 A 法同一背景协议），(hkl) 来自内置 CIF 的结构因子枚举，
+    晶粒度为谢乐公式表观值。core 未就绪时抛 CoreUnavailableError。
+    """
+    fn = _core("phasepeak.main_peaks")
+    return fn(pat, builtin_phases(), n=int(n))
+
+
+def pattern_wavelength(pat: Any) -> float:
+    """谱图使用的波长（Å）：优先 meta 中的 wavelength，否则 Cu Kα1。"""
+    return float(_core("phasepeak.pattern_wavelength")(pat))

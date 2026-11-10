@@ -67,6 +67,12 @@ def core_symbol(key: str) -> Any:
         if key == "profile.cif.parse_cif":
             from rutana.core.profile.cif import parse_cif
             return parse_cif
+        if key == "phasepeak.main_peaks":
+            from rutana.core.phasepeak import main_peaks
+            return main_peaks
+        if key == "phasepeak.pattern_wavelength":
+            from rutana.core.phasepeak import pattern_wavelength
+            return pattern_wavelength
         if key == "profile.forward.ProfileParams":
             from rutana.core.profile.forward import ProfileParams
             return ProfileParams

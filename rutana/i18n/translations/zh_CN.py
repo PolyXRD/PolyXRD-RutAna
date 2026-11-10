@@ -244,4 +244,17 @@ TRANSLATIONS: dict[str, str] = {
     "batch.csv.chi2": "Chi2",
     "batch.csv.verdict": "判定",
     "batch.csv.ok": "正常",
+    # ---- 谱图下方主峰参数表（锐钛矿/金红石：2θ、d、hkl、强度、半峰宽、谢乐晶粒度）----
+    "peaks.title": "主峰参数 · 谢乐晶粒度",
+    "peaks.col.phase": "物相",
+    "peaks.col.two_theta": "2θ / °",
+    "peaks.col.d": "d / Å",
+    "peaks.col.hkl": "(hkl)",
+    "peaks.col.intensity": "强度 / counts",
+    "peaks.col.fwhm": "半峰宽 / °",
+    "peaks.col.size": "晶粒度 / nm",
+    "peaks.empty": "导入谱图后自动列出锐钛矿与金红石的主峰参数",
+    "peaks.note": "晶粒度按谢乐公式 D = Kλ/(β·cosθ) 估算（K = 0.9，λ = {lam} Å）；半峰宽未扣仪器展宽，为表观值（下限）。",
+    "phase.anatase": "锐钛矿",
+    "phase.rutile": "金红石",
 }

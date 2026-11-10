@@ -244,4 +244,17 @@ TRANSLATIONS: dict[str, str] = {
     "batch.csv.chi2": "Chi2",
     "batch.csv.verdict": "判定",
     "batch.csv.ok": "正常",
+    # ---- スペクトル下部の主ピーク表（2θ・d・hkl・強度・半値幅・シェラー粒径）----
+    "peaks.title": "主ピークパラメータ · シェラー粒径",
+    "peaks.col.phase": "相",
+    "peaks.col.two_theta": "2θ / °",
+    "peaks.col.d": "d / Å",
+    "peaks.col.hkl": "(hkl)",
+    "peaks.col.intensity": "強度 / counts",
+    "peaks.col.fwhm": "半値幅 / °",
+    "peaks.col.size": "粒径 / nm",
+    "peaks.empty": "スペクトルを読み込むとアナターゼとルチルの主ピークを一覧表示します",
+    "peaks.note": "粒径はシェラーの式 D = Kλ/(β·cosθ)（K = 0.9、λ = {lam} Å）で推定。半値幅は装置幅を補正しておらず、見かけの値（下限）です。",
+    "phase.anatase": "アナターゼ",
+    "phase.rutile": "ルチル",
 }

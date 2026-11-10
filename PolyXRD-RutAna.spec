@@ -46,12 +46,15 @@ a = Analysis(
         "rutana.core.vendor.raw_formats",
         "rutana.core.vendor.text_formats",
         "rutana.core.peakmeasure",
+        # v1.7.0：主峰参数表（带 hkl 的反射枚举 + 谢乐晶粒度）
+        "rutana.core.phasepeak",
         "rutana.core.plot",
         "rutana.core.smooth",
         "rutana.core.profile.cif",
         "rutana.core.profile.forward",
         "rutana.core.profile.shape",
         "rutana.core.profile.struct",
+        "rutana.core.profile.reflections",
         "rutana.core.refine.linear",
         "rutana.core.refine.lm",
         "rutana.core.refine.nonlinear",
@@ -65,6 +68,8 @@ a = Analysis(
         # 这里显式补全，保证 PyInstaller 静态分析可追踪）
         "rutana.gui.batch",
         "rutana.gui.canvas",
+        # v1.7.0：谱图下方主峰参数表
+        "rutana.gui.peaks_panel",
         "rutana.gui.panels",
         # v1.2.0：B 法面板拆出（同 ≤400 行约束）
         "rutana.gui.panels_b",
