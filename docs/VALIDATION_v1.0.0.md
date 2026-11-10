@@ -697,3 +697,70 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 > `PolyXRD-RutAna-v1.6.2-Setup.exe` 与注册版 onedir `dist/PolyXRD-RutAna/`；
 > v1.4.0–v1.6.1 的旧二进制、`_old_*onedir*` 备份与固定名副本 `PolyXRD-RutAna.exe`
 > 已由用户手动删除（Release 资产仍在 GitHub，历史二进制不受影响）。
+
+---
+
+## v1.7.0 · 谱图下方主峰参数表（谢乐晶粒度）
+
+### 需求
+
+用户在实机界面提出：绘图区往上移一些，下方开出区域显示锐钛矿/金红石主峰的
+角度（d 值）、晶面指数、强度、半峰宽与谢乐公式计算的晶粒度。
+
+### 口径（表内数值自洽，且与图上曲线同源）
+
+| 列 | 来源 |
+| --- | --- |
+| 2θ | 实测谱测峰（`measure_peak`，PROTOCOL_V100 背景：linear_edges / edge_frac 0.14 / margin 0.18） |
+| d | 由**该行实测 2θ** 经 Bragg 反算（λ 取谱图 meta 的 wavelength，缺省 Cu Kα1 1.540598 Å） |
+| (hkl) | 内置 CIF 结构因子枚举（`compute_reflections`），取该 d 上贡献最大的反射 |
+| 强度 | 净峰高（counts）；相对强度以本相最强主峰 = 100% |
+| 半峰宽 | 实测半高宽（2θ 口径，度） |
+| 晶粒度 | `D = Kλ/(β·cosθ)`，K = 0.9，β 为 FWHM 弧度；**未扣除仪器展宽 → 表观值/下限** |
+
+主峰挑选：每相按结构因子强度取前 5，要求两两间距 ≥ 0.6°（避免把重叠峰当独立峰），
+并落在谱图 2θ 范围内。测峰失败（SNR < 4 或半高宽不可定）的行仍然保留，
+界面显示「—」——让用户看出「这一相在该谱里没有独立峰」，而不是给假数。
+
+### 实现
+
+- 新增 `rutana/core/profile/reflections.py`：带 (hkl) 的反射枚举。与
+  `struct.compute_peaks` 同散射因子 / 同 LP / 同 Kα 权重，但只枚举规范半空间
+  （Friedel 对不重复计数），强度并列时按 `_hkl_rank` 取卡片惯用指数
+  （锐钛 101 而非 01-1、金红石 110 而非 1-10）。
+- 新增 `rutana/core/phasepeak.py`：`main_peaks()` + `scherrer_size_nm()` +
+  `bragg_d()`；重叠区宽窗（0.4°）测峰失败时自动收窄到 0.25° 重试
+  （`NARROW_TOL`）——实测把金红石 211（54.34°，夹在锐钛 105/211 之间）
+  从 SNR 1.61 救回 2519 counts。
+- 新增 `rutana/gui/peaks_panel.py`：7 列只读表 + 脚注；空态一行合并提示，
+  空态时整块压到 ~130 px，有数据时按行数撑开（`_sync_height` / `_sync_splitter`）。
+- `main_window.py`：中栏改为竖向 `QSplitter`（画布 + 主峰表，可拖动）；
+  `_refresh_peaks` 在导入/切换谱图后刷新，异常只清空表格、不打断主流程。
+- `corenodes.py` 增加 `phasepeak.main_peaks` / `phasepeak.pattern_wavelength`
+  静态导入映射（PyInstaller 只跟踪静态 import）；两个 spec 的 hiddenimports
+  同步补 `rutana.core.phasepeak`、`rutana.core.profile.reflections`、
+  `rutana.gui.peaks_panel`。
+- i18n 三语新增 12 个键（`peaks.*` / `phase.*`）；英文表头用 `I / counts`
+  以免在 7 列均分时被截断。
+
+### 测试（v1.6.2 基线 282 项，只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest` | **291 项：290 passed + 1 skipped**（唯一 skip 仍是 `test_forward.py` 的 SynthPattern oracle 依赖） |
+| `tests/test_phasepeak.py`（新增 9 项） | 谢乐解析值（0.2°/25.3° → 40.71 nm）；Bragg 反算；`compute_reflections` 与 `compute_peaks` 位置/d 一致且强度恰为 2 倍（全空间 vs 半空间）；主峰指数惯例（101/110）；间距过滤；合成谱端到端（两相各 5 条、峰位/相对强度/晶粒度 ±15%）；谱范围过滤；纯锐钛谱金红石行保留但 ok=False |
+| 版本收口（改 2 处） | `tests/test_i18n.py::test_version_is_170`、`tests/test_gui_smoke.py::test_version_is_170` |
+
+证据图：`docs/evidence/15_main_peaks.png`（18% 实测试样：锐钛 101 25.34°/d 3.5120/
+18023 counts/FWHM 0.174°/46.7 nm；金红石 110 27.48°/3.2431/2740/0.182°/45.0 nm）。
+
+### 构建产物（v1.7.0）
+
+| 产物 | 大小 | 佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.7.0.exe`（内部评估版 onefile） | 110,408,694 B（105.3 MB，MD5 `8a68c1cfac5017d077320b506f662038`） | Analysis TOC 含 `rutana.gui.peaks_panel` / `rutana.core.phasepeak` / `rutana.core.profile.reflections`；`rutana.gui.registration` 仅出现在 excludes；含 `rthook_internal` |
+| `dist/PolyXRD-RutAna/`（注册版 onedir） | 258 MB | TOC 含新模块 + `rutana.gui.registration`，无 runtime_hook |
+| `dist/PolyXRD-RutAna-v1.7.0-Setup.exe`（Inno Setup 6） | 71,843,751 B（68.5 MB，MD5 `fcd909af27c8a5515dd95d99ae0c6c3b`） | ISCC `/DAPP_VER=v1.7.0` 编译成功（66.4 s，lzma2/max + solid；中文语言包 8 条无害 Warning） |
+| 验收 | — | 静默安装 `/VERYSILENT /DIR=D:\tmp\rutana_v170_test` rc=0 → 启动 22 s 进程常驻 → 静默卸载 rc=0，目录清空；内部版 onefile 同样 22 s 常驻 |
+
+构建前把上一版 `dist/PolyXRD-RutAna`（onedir）改名让位为 `dist/_old_v162_onedir_<ts>`。
