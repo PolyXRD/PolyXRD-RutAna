@@ -15,7 +15,8 @@
 
     {"path","sample","wa","wr","rwp","rp","chi2","ok","message",
      "po_r": {phase: (h,k,l,r)} 或 None,
-     "fit": {"two_theta","yobs","ycalc","diff"}}   # fit 仅成功行有
+     "fit": {"two_theta","yobs","ycalc","diff"},   # fit 仅成功行有
+     "summary": RefineSummary 或 None}             # v1.7.1 精修结构摘要
 
 CSV 一律 **UTF-8 with BOM**（``utf-8-sig``）写出：中文表头/备注在 Excel
 双击直开时不乱码，同时 Python/ pandas 以 ``utf-8-sig`` 读回也能正确剥掉 BOM。
@@ -180,7 +181,7 @@ def run_method_b_batch(items: Sequence[tuple[Any, Any]], *, refine_zero: bool = 
         row: dict[str, Any] = {
             "path": str(path), "sample": sample, "wa": None, "wr": None,
             "rwp": None, "rp": None, "chi2": None, "ok": False, "message": "",
-            "po_r": None, "fit": None}
+            "po_r": None, "fit": None, "summary": None}
         try:
             res = services.run_method_b(
                 pat, refine_zero=refine_zero, refine_uvw=refine_uvw,
@@ -200,7 +201,7 @@ def run_method_b_batch(items: Sequence[tuple[Any, Any]], *, refine_zero: bool = 
         rf = res["result"].rf
         row.update(wa=res.get("wa"), wr=res.get("wr"),
                    rwp=float(rf.rwp), rp=float(rf.rp), chi2=float(rf.chi2), ok=True,
-                   po_r=res.get("po_r"))
+                   po_r=res.get("po_r"), summary=res.get("summary"))
         row["fit"] = {"two_theta": res["two_theta"], "yobs": pat.intensity,
                       "ycalc": res["ycalc"], "diff": res["diff"]}
         out.append(row)

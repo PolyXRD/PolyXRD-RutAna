@@ -26,9 +26,23 @@ import numpy as np
 
 from rutana.gui import batch, services
 from rutana.gui.exports import a_rows
+from rutana.gui.refine_view import cell_text, phase_name, vol_size_text
 from rutana.gui.verdict import rwp_verdict
 from rutana.gui.workers import run_busy_task
 from rutana.i18n import tr
+
+
+def _summary_rows(summary) -> list[tuple[str, str]]:
+    """精修摘要 -> 导出报告的「标签 / 值」行；无摘要返回空表（v1.7.1）。
+
+    每相一行：晶胞参数 + 体积 + 晶粒，与 B 法面板紧凑区同款格式，保证
+    「界面所见 = 报告所写」。
+    """
+    if summary is None:
+        return []
+    return [(phase_name(p.name), f"{cell_text(p)}    {vol_size_text(p)}")
+            for p in summary.phases]
+
 
 
 def _po_pair(po_r) -> tuple[float | None, float | None]:
@@ -220,6 +234,7 @@ class TaskMixin:
         self.tabs.b_panel.set_rfactors(row["rwp"], row["rp"], row["chi2"])
         self.tabs.b_panel.set_quantities(row["wa"], row["wr"])
         self.tabs.b_panel.set_po(*_po_pair(row.get("po_r")))
+        self.tabs.b_panel.set_summary(row.get("summary"))
         fit = row.get("fit")
         if fit:
             self.canvas.show_fit(np.asarray(fit["two_theta"]),
@@ -227,17 +242,18 @@ class TaskMixin:
                                  np.asarray(fit["ycalc"]),
                                  np.asarray(fit["diff"]))
         verdict = tr(rwp_verdict(row["rwp"])[0])   # v1.6.2 四档口径
+        rows = [(tr("result.b_wa"),
+                 tr("verdict.na") if row["wa"] is None else f"{row['wa']:.2f}"),
+                (tr("result.b_wr"),
+                 tr("verdict.na") if row["wr"] is None else f"{row['wr']:.2f}"),
+                (tr("result.rwp"), f"{row['rwp']:.2f}"),
+                (tr("result.rp"), f"{row['rp']:.2f}"),
+                (tr("result.chi2"), f"{row['chi2']:.3f}"),
+                (tr("result.fit_verdict"), verdict),
+                (tr("result.b_po"), _po_text(row.get("po_r")))]
         self._last_b = {
             "sample": row["sample"], "file": row["path"],
-            "rows": [(tr("result.b_wa"),
-                      tr("verdict.na") if row["wa"] is None else f"{row['wa']:.2f}"),
-                     (tr("result.b_wr"),
-                      tr("verdict.na") if row["wr"] is None else f"{row['wr']:.2f}"),
-                     (tr("result.rwp"), f"{row['rwp']:.2f}"),
-                     (tr("result.rp"), f"{row['rp']:.2f}"),
-                     (tr("result.chi2"), f"{row['chi2']:.3f}"),
-                     (tr("result.fit_verdict"), verdict),
-                     (tr("result.b_po"), _po_text(row.get("po_r")))],
+            "rows": rows + _summary_rows(row.get("summary")),
             "verdict": verdict,
         }
 
@@ -272,6 +288,7 @@ class TaskMixin:
         self.tabs.b_panel.set_quantities(
             None if wa is None else float(wa), None if wr is None else float(wr))
         self.tabs.b_panel.set_po(*_po_pair(data.get("po_r")))
+        self.tabs.b_panel.set_summary(data.get("summary"))
         self.canvas.show_fit(np.asarray(data["two_theta"]),
                              np.asarray(self._current_pattern().intensity),
                              np.asarray(data["ycalc"]),
@@ -289,7 +306,7 @@ class TaskMixin:
                 (tr("result.chi2"), f"{rf.chi2:.3f}"),
                 (tr("result.fit_verdict"), tr(verdict_key)),
                 (tr("result.b_po"), _po_text(data.get("po_r"))),
-            ],
+            ] + _summary_rows(data.get("summary")),
             "verdict": tr(verdict_key),
         }
 

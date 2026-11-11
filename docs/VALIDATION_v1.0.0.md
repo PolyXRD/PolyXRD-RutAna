@@ -764,3 +764,104 @@ RAW、乱码 XML、超大文件 `MemoryError` 中文转换，以及 RAW 不可�
 | 验收 | — | 静默安装 `/VERYSILENT /DIR=D:\tmp\rutana_v170_test` rc=0 → 启动 22 s 进程常驻 → 静默卸载 rc=0，目录清空；内部版 onefile 同样 22 s 常驻 |
 
 构建前把上一版 `dist/PolyXRD-RutAna`（onedir）改名让位为 `dist/_old_v162_onedir_<ts>`。
+
+
+---
+
+## v1.7.1 · B 法显示精修后的每相晶胞与晶粒（含「更多信息」窗口）
+
+### 需求
+
+用户在 B 法结果页提出：B 法也要显示**精修后**每个物相的晶胞参数、晶胞体积、
+每个物相的晶粒尺寸；版面放不下时用「More（更多信息）」弹窗承载精修后的
+更多结果。
+
+### 口径（全部来自精修结果，不读 CIF 原始值）
+
+| 项 | 来源 |
+| --- | --- |
+| 晶胞 a/b/c | `RefineResult.cell_scales` 的 `(fa, fc)` 作用于 CIF 晶胞：`a·fa, b·fa, c·fc`（与精修前向模型 `_scaled` 同口径）；α/β/γ 不精修，照抄 CIF |
+| 晶胞体积 V | 由**缩放后的六个参数**按通用公式重算（支持三斜）：`V = abc·√(1 − cos²α − cos²β − cos²γ + 2cosαcosβcosγ)` |
+| 每相晶粒 D | 该相**最强反射**（缩放晶胞 + 结构因子枚举）→ 加精修零点 → 在精修后的 Caglioti 曲线 `U·tan²θ + V·tanθ + W` 上求 FWHM → `D = Kλ/(β·cosθ)`，K = 0.9 |
+| 标度（相对） | `RefineResult.scales` 线性最小二乘解，跨相互相耦合，仅宜做粗比 |
+| 择优取向 r | `RefineResult.po_r[phase][3]`（未精修该相则为「—」） |
+| 全局项 | zero / U / V / W / eta / asym / bfactor / λ / Rwp / Rp / χ² / 迭代 / 重启 / 丢相 |
+
+**降级规则**：单相结构异常（无原子、无反射）只让**该相**的峰位/FWHM/晶粒变
+「—」，晶胞与体积照常给出；整份摘要计算失败时 B 法结果本身不受影响（
+`services._refine_summary` 兜底返回 `None`，面板回到空态），R 因子与定量照常。
+
+晶粒仍是**表观值（下限）**：模型宽度含仪器展宽，与主峰参数表口径一致但数据
+来源不同（主峰表用实测半高宽、这里用精修模型宽度），两者会有几个百分点差异。
+
+### 实现
+
+- `rutana/core/phasepeak.py`：新增 `cell_volume()`、`RefinedPhase` /
+  `RefineSummary` 两个 dataclass 与 `refined_summary(phases, result, *,
+  wavelength=None)`；模块定位从 v1.7.0 的「主峰参数表」扩为
+  「主峰参数表 + 精修结构摘要」。
+- 新增 `rutana/gui/refine_view.py`：
+  - `RefineSummaryBox`（QGroupBox）：一相两行（晶胞参数 / 体积与晶粒），
+    悬停给完整六参数；底部「更多信息…」按钮，空态置灰 + 一行灰字提示；
+  - `RefineDetailDialog`：顶部 `Rwp/Rp/χ²/λ` 一行 + 三个分区（晶胞与体积
+    八列表、峰形与微结构六列表、全局参数两列网格）+ 口径说明脚注；
+  - 纯格式化函数 `cell_text` / `vol_size_text` / `full_tooltip` 与 i18n 解耦，
+    可单独单测（四方相写 `a = b = …，c = …`，等轴相只写 `a = …`，
+    非直角晶胞末尾补 α/β/γ）。
+- `panels_b.py`：结果卡下方接入 `RefineSummaryBox`；新增 `set_summary` /
+  `clear_summary`，`clear_rfactors` 一并复位。
+- `services.run_method_b()`：返回值新增 `summary`（`RefineSummary` 或 None）。
+- `batch.py`：B 法结果行新增 `summary` 字段（不写入 CSV，CSV 仍是 7 列）。
+- `tasks.py`：单样本与批量的首行回填都调用 `set_summary`；导出汇总
+  （HTML 报告）在 R 因子行之后追加每相「晶胞 + 体积 + 晶粒」行。
+- `corenodes.py` 增加 `phasepeak.refined_summary` 静态映射；两个 spec 的
+  hiddenimports 补 `rutana.gui.refine_view`。
+- i18n 三语新增 33 个键（`b.summary.*` 9 个、`b.more.*` 24 个）。
+
+### 真实数据实测（18% 实测试样，Rwp 9.29%，6.8 s）
+
+| 相 | a / Å | c / Å | V / Å³ | 最强峰 2θ / ° | FWHM / ° | D / nm | 标度 | r |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 锐钛矿 | 3.7853 | 9.5134 | 136.31 | 25.335 | 0.1528 | 53.3 | 0.003962 | 1.0054 |
+| 金红石 | 4.5937 | 2.9593 | 62.45 | 27.468 | 0.1512 | 54.1 | 0.003840 | 1.0167 |
+
+全局：zero 0.0325°、U 0.03372、V −0.04033、W 0.03069、eta 0.669、asym 0.0505、
+B 0.308、Rp 6.47%、χ² 1.526、迭代 113 次、未重启、无丢相。晶胞值与
+COD 7206075 / 9001681 卡片值（3.7845/9.5143、4.5937/2.9587）差 < 0.3%，
+与 v1.7.0 主峰表实测晶粒（46.7 / 45.0 nm）同量级（差异来自实测半高宽 vs
+精修模型宽度）。
+
+### 测试（基线 291 项，只增不减）
+
+| 项 | 结果 |
+| --- | --- |
+| 全套 `python -m pytest` | **306 项：305 passed + 1 skipped**（唯一 skip 仍是 `test_forward.py` 的 SynthPattern oracle 依赖） |
+| `tests/test_refine_summary.py`（新增 15 项） | `cell_volume` 正交/四方/六方解析值与退化角度不出 nan；摘要逐字段映射（晶胞、体积、最强峰位、Caglioti 宽度、谢乐晶粒、择优取向、标度、R 因子、迭代/重启/丢相）；`cell_scales` 缩放一致性（体积 ×fa²fc、峰位左移）；空原子相降级（体积保留、峰位 nan、晶粒 None）；缺 `params` 抛 ValueError；面板空态（0 相、按钮置灰、`open_more` 返回 None）；面板回填与 `cell_text`/`vol_size_text` 文本一致（四方相不重复抄 a）；语言热切换（标题/按钮/行文本）；`open_more` 返回详情窗口；详情窗口两张表行列数、晶胞单元格数值、11 项全局统计、丢相序号 1 起；`BPanel.set_summary` / `clear_rfactors` 联动 |
+| 版本收口（改 2 处） | `tests/test_i18n.py::test_version_is_171`、`tests/test_gui_smoke.py::test_version_is_171` |
+
+证据图：`docs/evidence/02_main_window_b.png`（B 法面板：R 因子卡 + 精修结构结果
++ 更多信息按钮）、`docs/evidence/16_refine_more.png`（「更多信息」窗口全貌）。
+`tools/capture_ui_evidence.py` 同步扩展（新增 `_demo_summary()` 与第 16 张抓图）。
+
+### 构建产物（v1.7.1）
+
+| 产物 | 大小 | 佐证 |
+| --- | --- | --- |
+| `dist/PolyXRD-RutAna-v1.7.1.exe`（内部评估版 onefile） | 110,424,600 B（105.3 MB，MD5 `4225348a492343fdeead5f42ed550e63`） | Analysis TOC 含 `rutana.gui.refine_view` / `rutana.core.phasepeak` / `rutana.gui.peaks_panel`；`rutana.gui.registration` 仅在 excludes；含 `rthook_internal`；启动后窗口标题 `PolyXRD RutAna v1.7.1 …`，30 s 进程常驻 |
+| `dist/PolyXRD-RutAna/`（注册版 onedir） | 258 MB | TOC 含新模块 + `rutana.gui.registration`，无 runtime_hook |
+| `dist/PolyXRD-RutAna-v1.7.1-Setup.exe`（Inno Setup 6） | 71,848,810 B（68.5 MB，MD5 `8a6f9943a444e02d3e917c903ecfe53f`） | ISCC `/DAPP_VER=v1.7.1` 编译成功（56.3 s；中文语言包 8 条无害 Warning） |
+| 验收 | — | 静默安装 `/VERYSILENT /DIR=D:	mputana_v171_test` rc=0 → 启动 30 s 窗口常驻 → 静默卸载 rc=0，目录清空 |
+
+构建前把上一版 `dist/PolyXRD-RutAna`（onedir）改名让位为
+`dist/_old_v170_onedir_<ts>`（PyInstaller 的 `--noconfirm` 会批量删除旧目录，
+改名比删除更稳妥、也可回退）。
+
+### 构建脚本修正
+
+`build_exe.bat` / `build_setup.bat` 两处隐患一并修掉：
+
+1. 文件是 **LF** 换行，`cmd` 解析时会把注释行拆成多条命令（v1.7.0 之后被编辑器
+   改写所致）→ 统一改回 CRLF；
+2. `for /f ... ('"%PY%" -c "..."')` 在含引号的可执行路径下取不到版本（`%%v` 为空，
+   产物名退化成 `PolyXRD-RutAna-v.exe`、固定名副本也不生成）→ 改为「Python 写
+   临时文件 + `set /p` 读取」，与引号无关。

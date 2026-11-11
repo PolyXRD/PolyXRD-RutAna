@@ -5,9 +5,13 @@
 再回填 ``set_rfactors`` / ``set_quantities``；文案全量走 i18n 热切换。
 
 v1.2.0：新增「批量精修…」入口（与「运行精修」并排）。
+v1.7.1：新增「精修结构结果」紧凑区（每相晶胞参数 / 体积 / 晶粒）与
+「更多信息…」窗口，控件实现在 :mod:`rutana.gui.refine_view`。
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -24,9 +28,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rutana.gui.refine_view import RefineSummaryBox
 from rutana.gui.resultcard import ResultCard
 from rutana.gui.verdict import rwp_verdict
 from rutana.i18n import tr
+
+if TYPE_CHECKING:
+    from rutana.core.phasepeak import RefineSummary
 
 #: 附加 CIF 路径存放在 QListWidgetItem 的 UserRole
 ROLE_CIF_PATH = Qt.UserRole + 1
@@ -111,6 +119,10 @@ class BPanel(QWidget):
         # ---- R 因子结果卡 ----
         self.card_b = ResultCard(B_RESULT_ROWS, self, title_key="b.rfactors")
         root.addWidget(self.card_b)
+
+        # ---- v1.7.1 精修结构结果（每相晶胞 / 体积 / 晶粒 + 「更多信息…」）----
+        self.summary_box = RefineSummaryBox(self)
+        root.addWidget(self.summary_box)
         root.addStretch(1)
         self.retranslate()
 
@@ -165,8 +177,20 @@ class BPanel(QWidget):
         self.card_b.set_value("result.b_po", f"{ra:.2f} / {rr:.2f}")
 
     def clear_rfactors(self) -> None:
-        """R 因子卡复位。"""
+        """R 因子卡与精修结构区一起复位。"""
         self.card_b.clear()
+        self.summary_box.clear()
+
+    # ------------------------------------------------------------------ #
+    # v1.7.1 精修结构摘要
+    # ------------------------------------------------------------------ #
+    def set_summary(self, summary: RefineSummary | None) -> None:
+        """回填每相精修后的晶胞参数 / 体积 / 晶粒（``None`` = 空态）。"""
+        self.summary_box.set_summary(summary)
+
+    def clear_summary(self) -> None:
+        """精修结构区复位（R 因子卡不动）。"""
+        self.summary_box.clear()
 
     # ------------------------------------------------------------------ #
     # 多语言
@@ -189,6 +213,7 @@ class BPanel(QWidget):
         self.btn_batch.setToolTip(tr("b.batch.tip"))
         self.lbl_busy.setText(tr("status.computing"))
         self.card_b.retranslate()
+        self.summary_box.retranslate()
 
     # ------------------------------------------------------------------ #
     # 内部

@@ -68,6 +68,7 @@ a = Analysis(
         "rutana.gui.canvas",
         # v1.7.0：谱图下方主峰参数表
         "rutana.gui.peaks_panel",
+        "rutana.gui.refine_view",
         "rutana.gui.panels",
         "rutana.gui.panels_b",
         "rutana.gui.dialogs",

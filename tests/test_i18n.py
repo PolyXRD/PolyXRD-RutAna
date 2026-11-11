@@ -89,9 +89,9 @@ def test_placeholders_consistent():
             f"{key} 占位符在三语中不一致: {names}")
 
 
-def test_version_is_170():
+def test_version_is_171():
     """版本号与 rutana/version.py 同源推进（UI/EXE/安装包统一取这里）。"""
-    assert __version__ == "1.7.0"
+    assert __version__ == "1.7.1"
 
 
 def test_all_code_keys_defined_in_all_languages():

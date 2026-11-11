@@ -13,7 +13,10 @@ set ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 if not exist "%ISCC%" set ISCC=ISCC.exe
 
 REM Read version from source
-for /f "delims=" %%v in ('"%PY%" -c "from rutana.version import __version__; print(__version__)"') do set VER=%%v
+set "VERFILE=%TEMP%\rutana_ver_%RANDOM%.txt"
+"%PY%" -c "from rutana.version import __version__; print(__version__)" > "%VERFILE%"
+set /p VER=<"%VERFILE%"
+del "%VERFILE%" >nul 2>&1
 
 echo [1/2] Building onedir (registered edition) v%VER% ...
 "%PY%" -m PyInstaller --noconfirm --clean PolyXRD-RutAna-Setup.spec

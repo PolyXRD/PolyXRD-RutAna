@@ -407,7 +407,21 @@ def run_method_b(pat: Any, *, refine_zero: bool = True, refine_uvw: bool = True,
         "wa": wa,
         "wr": wr,
         "po_r": getattr(res, "po_r", None),
+        "summary": _refine_summary(phases, res, pat),
     }
+
+
+def _refine_summary(phases: list, res: Any, pat: Any) -> Any:
+    """精修结果 -> 可展示摘要（每相晶胞/体积/晶粒 + 全局峰形参数）。
+
+    摘要只是**附加展示**：任何异常都降级为 ``None``，绝不让它把一次已经
+    成功的精修（R 因子、定量都已得出）变失败。
+    """
+    try:
+        lam = pattern_wavelength(pat)
+        return _core("phasepeak.refined_summary")(phases, res, wavelength=lam)
+    except Exception:  # noqa: BLE001 —— 附加展示降级，不影响主结果
+        return None
 
 
 def _b_qpa(phases: list, res: Any) -> tuple[float | None, float | None]:

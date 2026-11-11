@@ -73,6 +73,9 @@ def core_symbol(key: str) -> Any:
         if key == "phasepeak.pattern_wavelength":
             from rutana.core.phasepeak import pattern_wavelength
             return pattern_wavelength
+        if key == "phasepeak.refined_summary":
+            from rutana.core.phasepeak import refined_summary
+            return refined_summary
         if key == "profile.forward.ProfileParams":
             from rutana.core.profile.forward import ProfileParams
             return ProfileParams

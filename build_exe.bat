@@ -10,7 +10,10 @@ set PY=D:\Project\XRD\python310\python.exe
 if not exist "%PY%" set PY=python
 
 REM 从源码读取版本号（避免人工改两处）
-for /f "delims=" %%v in ('"%PY%" -c "from rutana.version import __version__; print(__version__)"') do set VER=%%v
+set "VERFILE=%TEMP%\rutana_ver_%RANDOM%.txt"
+"%PY%" -c "from rutana.version import __version__; print(__version__)" > "%VERFILE%"
+set /p VER=<"%VERFILE%"
+del "%VERFILE%" >nul 2>&1
 
 echo Building PolyXRD RutAna v%VER% ...
 "%PY%" -m PyInstaller --noconfirm --clean PolyXRD-RutAna.spec

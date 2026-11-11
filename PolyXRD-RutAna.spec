@@ -70,6 +70,7 @@ a = Analysis(
         "rutana.gui.canvas",
         # v1.7.0：谱图下方主峰参数表
         "rutana.gui.peaks_panel",
+        "rutana.gui.refine_view",
         "rutana.gui.panels",
         # v1.2.0：B 法面板拆出（同 ≤400 行约束）
         "rutana.gui.panels_b",

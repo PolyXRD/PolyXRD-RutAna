@@ -282,9 +282,9 @@ def test_about_dialog_content(qapp):
     assert current_language() == "zh_CN"
 
 
-def test_version_is_170():
-    """版本号已推进到 1.7.0（UI 版本号与 EXE/安装包名同源）。"""
-    assert __version__ == "1.7.0"
+def test_version_is_171():
+    """版本号已推进到 1.7.1（UI 版本号与 EXE/安装包名同源）。"""
+    assert __version__ == "1.7.1"
 
 
 def test_v160_pattern_extensions_in_folder_scan_and_filters():

@@ -2,9 +2,13 @@
 
 用途
 ----
-GUI 的「主峰参数」区在谱图下方常驻显示两相主峰的 2θ / d / (hkl) / 强度 /
-半峰宽 / 晶粒尺寸；本模块是该表的**唯一数据来源**（纯 core，无 Qt 依赖），
-便于单测与将来复用到报告/CLI。
+两处界面共用本模块（纯 core，无 Qt 依赖，便于单测与复用到报告/CLI）：
+
+1. **主峰参数表**（v1.7.0，谱图下方常驻）：:func:`main_peaks` —— 从实测谱逐峰
+   测出 2θ / 净峰高 / 半峰宽，按 CIF 配 (hkl)，再换算谢乐晶粒度；
+2. **精修结构摘要**（v1.7.1，B 法结果）：:func:`refined_summary` —— 把 Rietveld
+   精修后的每相晶胞（含 a/c 缩放）、晶胞体积、最强峰宽度与晶粒尺寸汇总成
+   一份不可变记录，供 B 法面板与「更多信息」窗口展示。
 
 口径（表内数值自洽，且与图上曲线一致）
 ------------------------------------
@@ -15,8 +19,9 @@ GUI 的「主峰参数」区在谱图下方常驻显示两相主峰的 2θ / d /
 - d 值由**实测峰位**经 Bragg 方程反算（单色 Kα1 波长），与同行的 2θ 一一对应；
 - (hkl) 来自内置 CIF 的结构因子枚举（:mod:`rutana.core.profile.reflections`），
   与理论 2θ 最接近的实测峰绑定；
-- 晶粒尺寸按谢乐公式 ``D = K·λ / (β·cosθ)``，K=0.9，β 为实测 FWHM（弧度）。
+- 晶粒尺寸按谢乐公式 ``D = K·λ / (β·cosθ)``，K=0.9，β 为该行 FWHM（弧度）。
   **未扣除仪器展宽**，故为表观值：峰越宽给出的 D 越小，只能当作下限参考。
+  精修摘要里 β 取 Caglioti 模型在**该相最强峰**处的 FWHM（含零点偏移）。
 
 主峰如何挑
 ----------
@@ -35,6 +40,7 @@ import numpy as np
 from rutana.core.dtypes import Pattern
 from rutana.core.peakmeasure import PROTOCOL_V100, measure_peak
 from rutana.core.profile.cif import CifStructure
+from rutana.core.profile.forward import MIN_W, caglioti_2theta
 from rutana.core.profile.reflections import compute_reflections
 
 #: 谢乐常数（球形晶粒、无畸变近似下的通用取值 0.89~0.94，取 0.9）
@@ -215,3 +221,130 @@ def main_peaks(pat: Pattern, phases: list[CifStructure], *,
                 intensity=height, rel_intensity=rel, fwhm=fwhm,
                 size_nm=scherrer_size_nm(fwhm, pos, lam), ok=ok))
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# 精修后的结构摘要（v1.7.1，B 法结果面板 + 「更多信息」窗口共用）
+# --------------------------------------------------------------------------- #
+def cell_volume(a: float, b: float, c: float, alpha: float, beta: float,
+                gamma: float) -> float:
+    """通用晶胞体积（含三斜）：V = abc·√(1 − cos²α − cos²β − cos²γ + 2cosαcosβcosγ)。"""
+    ca = math.cos(math.radians(float(alpha)))
+    cb = math.cos(math.radians(float(beta)))
+    cg = math.cos(math.radians(float(gamma)))
+    inner = 1.0 - ca * ca - cb * cb - cg * cg + 2.0 * ca * cb * cg
+    return float(a) * float(b) * float(c) * math.sqrt(max(inner, 0.0))
+
+
+@dataclass(frozen=True)
+class RefinedPhase:
+    """一相的精修结果摘要。
+
+    a/b/c/alpha/beta/gamma : 精修后的晶胞参数（内置两相为四方晶系，b 随 a 缩放）；
+    volume                 : 由上面六个参数算出的晶胞体积 (Å³)；
+    scale                  : 线性层解出的相标度（相对值，仅用于跨相粗比）；
+    two_theta              : 该相**最强衍射峰**的 2θ（已加精修零点，度）；
+    fwhm                   : 该峰由精修 Caglioti 模型给出的半峰宽（度，2θ 口径）；
+    size_nm                : 由该 FWHM 按谢乐公式得到的**表观**晶粒尺寸 (nm)；
+    po_r                   : March–Dollase 择优取向参数（未精修为 None）。
+    """
+
+    name: str
+    a: float
+    b: float
+    c: float
+    alpha: float
+    beta: float
+    gamma: float
+    volume: float
+    scale: float
+    two_theta: float
+    fwhm: float
+    size_nm: float | None
+    po_r: float | None = None
+
+
+@dataclass(frozen=True)
+class RefineSummary:
+    """一次 B 法精修的可展示摘要（面板摘要区与「更多信息」窗口的数据源）。"""
+
+    phases: tuple[RefinedPhase, ...]
+    wavelength: float
+    zero: float
+    u: float
+    v: float
+    w: float
+    eta: float
+    asym: float
+    bfactor: float
+    rwp: float
+    rp: float
+    chi2: float
+    iters: int
+    restarted: bool
+    dropped: tuple[int, ...] = ()
+
+
+def refined_summary(phases: list[CifStructure], result, *,
+                    wavelength: float | None = None) -> RefineSummary:
+    """把 :class:`~rutana.core.refine.nonlinear.RefineResult` 汇总成可展示摘要。
+
+    - 晶胞：``result.cell_scales`` 的 (fa, fc) 作用于 a/b 与 c（与精修前向模型
+      ``_scaled`` 完全同口径），体积按缩放后的六参数重算；
+    - 晶粒：用精修后的 Caglioti U/V/W 在**该相最强峰**处求 FWHM，再按谢乐公式
+      换算。模型宽度已包含仪器展宽，故同样是表观值（下限）；
+    - 任何单相异常（结构不合法、无反射）都只让该相的峰/晶粒降级为「—」，
+      不影响晶胞与体积。
+    """
+    prm = getattr(result, "params", None)
+    if prm is None:
+        raise ValueError("精修结果缺少峰形参数（params）")
+    lam = float(wavelength) if wavelength else float(
+        getattr(prm, "wavelength", 0.0) or DEFAULT_WAVELENGTH)
+    fwhm_func = caglioti_2theta(prm.U, prm.V, max(prm.W, MIN_W))
+    cell_scales = list(getattr(result, "cell_scales", []) or [])
+    scales = np.asarray(getattr(result, "scales", []), dtype=float).ravel()
+    po_map = getattr(result, "po_r", None) or {}
+
+    rows: list[RefinedPhase] = []
+    for i, st in enumerate(phases):
+        fa, fc = cell_scales[i] if i < len(cell_scales) else (1.0, 1.0)
+        a, b, c, al, be, ga = (float(x) for x in st.cell)
+        a2, b2, c2 = a * float(fa), b * float(fa), c * float(fc)
+        volume = cell_volume(a2, b2, c2, al, be, ga)
+
+        pos = float("nan")
+        fwhm = float("nan")
+        size: float | None = None
+        try:
+            scaled = CifStructure(st.name, (a2, b2, c2, al, be, ga), st.atoms)
+            refl = compute_reflections(scaled, lam, 5.0, 120.0)
+            if refl:
+                pos0 = float(max(refl, key=lambda r: r[2])[0]) + float(prm.zero)
+                fwhm = max(float(fwhm_func(pos0)), MIN_W)
+                pos = pos0
+                size = scherrer_size_nm(fwhm, pos0, lam)
+        except Exception:  # noqa: BLE001, S110 —— 单相降级，不影响其它相
+            pos, fwhm, size = float("nan"), float("nan"), None
+
+        entry = po_map.get(st.name)
+        rows.append(RefinedPhase(
+            name=str(st.name), a=a2, b=b2, c=c2, alpha=al, beta=be, gamma=ga,
+            volume=volume,
+            scale=float(scales[i]) if i < scales.size else float("nan"),
+            two_theta=pos, fwhm=fwhm, size_nm=size,
+            po_r=float(entry[3]) if entry else None))
+
+    rf = getattr(result, "rf", None)
+    return RefineSummary(
+        phases=tuple(rows), wavelength=lam, zero=float(prm.zero),
+        u=float(prm.U), v=float(prm.V), w=float(prm.W), eta=float(prm.eta),
+        asym=float(getattr(prm, "asym", 0.0)),
+        bfactor=float(getattr(prm, "bfactor", 0.0)),
+        rwp=float(getattr(rf, "rwp", float("nan"))),
+        rp=float(getattr(rf, "rp", float("nan"))),
+        chi2=float(getattr(rf, "chi2", float("nan"))),
+        iters=int(getattr(result, "iters", 0) or 0),
+        restarted=bool(getattr(result, "restarted", False)),
+        dropped=tuple(getattr(result, "phase_dropped", ()) or ()),
+    )

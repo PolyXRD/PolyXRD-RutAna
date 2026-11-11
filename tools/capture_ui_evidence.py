@@ -28,6 +28,7 @@ from rutana.gui.busy import BusyDialog  # noqa: E402
 from rutana.gui.khelp import KHelpDialog  # noqa: E402
 from rutana.gui.kwizard import KCalibWizardDialog  # noqa: E402
 from rutana.gui.main_window import MainWindow  # noqa: E402
+from rutana.gui.refine_view import RefineDetailDialog  # noqa: E402
 from rutana.i18n import set_language, tr  # noqa: E402
 
 #: 输出目录缺省值
@@ -75,6 +76,26 @@ def _fill_main_window(win: MainWindow) -> None:
         r2=0.9997, ref=42.0)
 
 
+def _demo_summary():
+    """合成一份精修摘要（v1.7.1 截图用；数值取自 18% 实测谱的真实精修结果）。"""
+    from rutana.core.phasepeak import RefinedPhase, RefineSummary
+
+    return RefineSummary(
+        phases=(
+            RefinedPhase(name="anatase", a=3.7853, b=3.7853, c=9.5134,
+                         alpha=90.0, beta=90.0, gamma=90.0, volume=136.31,
+                         scale=0.003962, two_theta=25.335, fwhm=0.1528,
+                         size_nm=53.3, po_r=1.0054),
+            RefinedPhase(name="rutile", a=4.5937, b=4.5937, c=2.9593,
+                         alpha=90.0, beta=90.0, gamma=90.0, volume=62.45,
+                         scale=0.00384, two_theta=27.468, fwhm=0.1512,
+                         size_nm=54.1, po_r=1.0167),
+        ),
+        wavelength=1.540598, zero=0.0325, u=0.03372, v=-0.04033, w=0.03069,
+        eta=0.669, asym=0.0505, bfactor=0.308, rwp=9.29, rp=6.47, chi2=1.526,
+        iters=113, restarted=False, dropped=())
+
+
 def capture(out_dir: Path) -> list[Path]:
     """抓全部证据图，返回生成的文件路径列表。"""
     set_language("zh_CN")
@@ -86,10 +107,17 @@ def capture(out_dir: Path) -> list[Path]:
     win.resize(1280, 800)
     made.append(_grab(win, out_dir / "01_main_window_a.png"))
 
-    # 2) B 法 R 因子卡（拟合良好）
+    # 2) B 法 R 因子卡 + 精修结构摘要（拟合良好）
     win.tabs.setCurrentIndex(1)
     win.tabs.b_panel.set_rfactors(8.42, 6.10, 1.234)
+    win.tabs.b_panel.set_quantities(48.21, 51.79)
+    win.tabs.b_panel.set_po(1.0054, 1.0167)
+    win.tabs.b_panel.set_summary(_demo_summary())
     made.append(_grab(win, out_dir / "02_main_window_b.png"))
+
+    # 2b) v1.7.1「更多信息」窗口（精修后的完整结果）
+    made.append(_grab(RefineDetailDialog(_demo_summary(), win),
+                      out_dir / "16_refine_more.png"))
 
     # 3) 忙对话框：确定百分比 + 迭代行
     busy = BusyDialog(win, title=tr("busy.title_refine"), cancellable=False)
