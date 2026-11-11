@@ -847,14 +847,22 @@ COD 7206075 / 9001681 卡片值（3.7845/9.5143、4.5937/2.9587）差 < 0.3%，
 
 | 产物 | 大小 | 佐证 |
 | --- | --- | --- |
-| `dist/PolyXRD-RutAna-v1.7.1.exe`（内部评估版 onefile） | 110,424,600 B（105.3 MB，MD5 `4225348a492343fdeead5f42ed550e63`） | Analysis TOC 含 `rutana.gui.refine_view` / `rutana.core.phasepeak` / `rutana.gui.peaks_panel`；`rutana.gui.registration` 仅在 excludes；含 `rthook_internal`；启动后窗口标题 `PolyXRD RutAna v1.7.1 …`，30 s 进程常驻 |
+| `dist/PolyXRD-RutAna-v1.7.1.exe`（内部评估版 onefile） | 110,423,257 B（105.3 MB，MD5 `c43b503027cef9399aa76ea8f2259243`） | Analysis TOC 含 `rutana.gui.refine_view` / `rutana.core.phasepeak` / `rutana.gui.peaks_panel`；`rutana.gui.registration` 仅在 excludes；含 `rthook_internal`；启动后窗口标题 `PolyXRD RutAna v1.7.1 …`，30 s 进程常驻 |
 | `dist/PolyXRD-RutAna/`（注册版 onedir） | 258 MB | TOC 含新模块 + `rutana.gui.registration`，无 runtime_hook |
-| `dist/PolyXRD-RutAna-v1.7.1-Setup.exe`（Inno Setup 6） | 71,848,810 B（68.5 MB，MD5 `8a6f9943a444e02d3e917c903ecfe53f`） | ISCC `/DAPP_VER=v1.7.1` 编译成功（56.3 s；中文语言包 8 条无害 Warning） |
-| 验收 | — | 静默安装 `/VERYSILENT /DIR=D:	mputana_v171_test` rc=0 → 启动 30 s 窗口常驻 → 静默卸载 rc=0，目录清空 |
+| `dist/PolyXRD-RutAna-v1.7.1-Setup.exe`（Inno Setup 6） | 71,853,793 B（68.5 MB，MD5 `4d38ecb185f7b6749e9b109db32c5eaa`） | ISCC `/DAPP_VER=v1.7.1` 编译成功（56.5 s；中文语言包 8 条无害 Warning） |
+| 验收 | — | 静默安装 `/VERYSILENT /DIR=D:	mp
+utana_v171_test` rc=0 → 启动 30 s 窗口常驻 → 静默卸载 rc=0，目录清空 |
 
 构建前把上一版 `dist/PolyXRD-RutAna`（onedir）改名让位为
 `dist/_old_v170_onedir_<ts>`（PyInstaller 的 `--noconfirm` 会批量删除旧目录，
 改名比删除更稳妥、也可回退）。
+
+### 启动图版本号（v1.7.0 遗留缺陷）
+
+`resources/splash-screen.png` 由 `tools/build_artwork.py` 把 `v{__version__}` 烙进图片，
+v1.7.0 升版时漏跑该脚本，导致 1.7.0 的启动图仍写着 **v1.6.2**（单文件版 cold start
+最显眼的一处版本错位）。v1.7.1 已重跑 `tools/build_artwork.py`（7 个资产全部重生成，
+启动图显示 v1.7.1），并重新打了两个版次；「升版必跑 build_artwork」已记入项目长期约定。
 
 ### 构建脚本修正
 
